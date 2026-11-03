@@ -34,6 +34,9 @@ class ShortsBlockerService : AccessibilityService() {
     private val captureExecutor = Executors.newSingleThreadExecutor()
     private val capturing = AtomicBoolean(false)
 
+    // Diagnostics: events received per app since the service started (scrolled, content, window).
+    private val eventCounts = TargetApp.entries.associateWith { IntArray(3) }
+
     // The service only receives events from Instagram/YouTube (see accessibility_service_config),
     // so switching to another app produces no event. While the badge is up, poll the
     // foreground window and drop the badge once it's no longer a target app.
@@ -65,6 +68,13 @@ class ShortsBlockerService : AccessibilityService() {
             return
         }
         val now = SystemClock.uptimeMillis()
+        eventCounts.getValue(app).let { c ->
+            when (event.eventType) {
+                AccessibilityEvent.TYPE_VIEW_SCROLLED -> c[0]++
+                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> c[1]++
+                AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> c[2]++
+            }
+        }
 
         // Content-changed events fire constantly; don't walk the view tree for every one.
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
@@ -111,9 +121,12 @@ class ShortsBlockerService : AccessibilityService() {
         if (now - lastCaptureAt < CAPTURE_INTERVAL_MS) return
         if (!capturing.compareAndSet(false, true)) return
         lastCaptureAt = now
+        val c = eventCounts.getValue(app)
+        val summary = "# events: scrolled=${c[0]} content=${c[1]} window=${c[2]}\n" +
+            "# player detected: $inViewer"
         captureExecutor.execute {
             try {
-                captureViewIds(root, app)
+                captureViewIds(root, app, summary)
             } catch (e: Exception) {
                 // Window changed mid-walk; try again next interval.
             } finally {
@@ -122,7 +135,7 @@ class ShortsBlockerService : AccessibilityService() {
         }
     }
 
-    private fun captureViewIds(root: AccessibilityNodeInfo, app: TargetApp) {
+    private fun captureViewIds(root: AccessibilityNodeInfo, app: TargetApp, summary: String) {
         val ids = sortedSetOf<String>()
         val queue = ArrayDeque<AccessibilityNodeInfo>().apply { add(root) }
         var visited = 0
@@ -132,7 +145,7 @@ class ShortsBlockerService : AccessibilityService() {
             node.viewIdResourceName?.let { ids.add(it.substringAfter(":id/")) }
             for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
         }
-        store.saveViewIds(app, ids.joinToString("\n"))
+        store.saveViewIds(app, summary + "\n" + ids.joinToString("\n"))
     }
 
     private fun leaveViewer() {
