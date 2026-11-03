@@ -7,6 +7,8 @@ import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Watches Instagram and YouTube. While the Reels/Shorts player is visible it counts each
@@ -26,6 +28,11 @@ class ShortsBlockerService : AccessibilityService() {
     private var lastCaptureAt = 0L
 
     private val handler = Handler(Looper.getMainLooper())
+
+    // Walking the whole view tree is hundreds of IPC calls (slow on Instagram's large tree),
+    // so diagnostics run off the main thread and never delay counting or the badge.
+    private val captureExecutor = Executors.newSingleThreadExecutor()
+    private val capturing = AtomicBoolean(false)
 
     // The service only receives events from Instagram/YouTube (see accessibility_service_config),
     // so switching to another app produces no event. While the badge is up, poll the
@@ -66,11 +73,8 @@ class ShortsBlockerService : AccessibilityService() {
         lastCheckAt = now
 
         val root = rootInActiveWindow ?: return
-        if (now - lastCaptureAt > CAPTURE_INTERVAL_MS) {
-            lastCaptureAt = now
-            captureViewIds(root, app)
-        }
         if (!isViewerVisible(root, app)) {
+            captureViewIdsAsync(root, app, now)
             leaveViewer()
             return
         }
@@ -89,7 +93,7 @@ class ShortsBlockerService : AccessibilityService() {
             store.increment(app)
         }
         badge.show(store.total(), store.limit)
-        if (store.isLimitReached()) block(now)
+        if (store.isLimitReached()) block(now) else captureViewIdsAsync(root, app, now)
     }
 
     private fun isViewerVisible(root: AccessibilityNodeInfo, app: TargetApp): Boolean =
@@ -103,6 +107,21 @@ class ShortsBlockerService : AccessibilityService() {
      * correct Reels/Shorts IDs can be found from inside ThumbBreak (long-press the title).
      * Only IDs are stored — no on-screen text.
      */
+    private fun captureViewIdsAsync(root: AccessibilityNodeInfo, app: TargetApp, now: Long) {
+        if (now - lastCaptureAt < CAPTURE_INTERVAL_MS) return
+        if (!capturing.compareAndSet(false, true)) return
+        lastCaptureAt = now
+        captureExecutor.execute {
+            try {
+                captureViewIds(root, app)
+            } catch (e: Exception) {
+                // Window changed mid-walk; try again next interval.
+            } finally {
+                capturing.set(false)
+            }
+        }
+    }
+
     private fun captureViewIds(root: AccessibilityNodeInfo, app: TargetApp) {
         val ids = sortedSetOf<String>()
         val queue = ArrayDeque<AccessibilityNodeInfo>().apply { add(root) }
@@ -135,6 +154,7 @@ class ShortsBlockerService : AccessibilityService() {
 
     override fun onDestroy() {
         handler.removeCallbacks(foregroundCheck)
+        captureExecutor.shutdownNow()
         badge.hide()
         super.onDestroy()
     }
@@ -143,7 +163,7 @@ class ShortsBlockerService : AccessibilityService() {
         private const val SWIPE_DEBOUNCE_MS = 800L
         private const val CHECK_THROTTLE_MS = 300L
         private const val BLOCK_COOLDOWN_MS = 1500L
-        private const val CAPTURE_INTERVAL_MS = 2000L
+        private const val CAPTURE_INTERVAL_MS = 5000L
         private const val MAX_CAPTURE_NODES = 600
         private const val FOREGROUND_CHECK_MS = 1000L
     }
