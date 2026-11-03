@@ -30,23 +30,30 @@ class BreakState {
   final int youtube;
   final int limit;
   final bool serviceEnabled;
+  final int sdkInt;
 
   const BreakState({
     this.instagram = 0,
     this.youtube = 0,
     this.limit = 20,
     this.serviceEnabled = false,
+    this.sdkInt = 0,
   });
+
+  // Android 13+ blocks Accessibility for sideloaded apps until "Allow restricted settings".
+  bool get hasRestrictedSettings => sdkInt >= 33;
 
   int get total => instagram + youtube;
   bool get limitReached => total >= limit;
 
-  factory BreakState.fromMap(Map<dynamic, dynamic> m, {bool? serviceEnabled}) {
+  factory BreakState.fromMap(Map<dynamic, dynamic> m,
+      {bool? serviceEnabled, int? sdkInt}) {
     return BreakState(
       instagram: m['instagram'] as int? ?? 0,
       youtube: m['youtube'] as int? ?? 0,
       limit: m['limit'] as int? ?? 20,
       serviceEnabled: serviceEnabled ?? m['serviceEnabled'] as bool? ?? false,
+      sdkInt: sdkInt ?? m['sdkInt'] as int? ?? 0,
     );
   }
 }
@@ -69,6 +76,8 @@ class NativeBridge {
   static Future<void> openAccessibilitySettings() =>
       _control.invokeMethod('openAccessibilitySettings');
 
+  static Future<void> openAppInfo() => _control.invokeMethod('openAppInfo');
+
   static Stream<Map<dynamic, dynamic>> stateStream() =>
       _events.receiveBroadcastStream().cast<Map<dynamic, dynamic>>();
 }
@@ -83,7 +92,9 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   BreakState _state = const BreakState();
   StreamSubscription<Map<dynamic, dynamic>>? _sub;
-  bool _promptShown = false;
+  // Prompt on launch, and again on return from Settings while still off — until "Not now".
+  bool _promptVisible = false;
+  bool _promptDismissed = false;
 
   @override
   void initState() {
@@ -91,8 +102,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _refresh();
     _sub = NativeBridge.stateStream().listen((m) {
-      setState(() => _state =
-          BreakState.fromMap(m, serviceEnabled: _state.serviceEnabled));
+      setState(() => _state = BreakState.fromMap(m,
+          serviceEnabled: _state.serviceEnabled, sdkInt: _state.sdkInt));
     });
   }
 
@@ -113,45 +124,84 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final s = await NativeBridge.getState();
     if (!mounted) return;
     setState(() => _state = s);
-    // Ask for the permission straight away on launch, once per app start.
-    if (!s.serviceEnabled && !_promptShown) {
-      _promptShown = true;
-      _showPermissionPrompt();
+    if (!s.serviceEnabled && !_promptVisible && !_promptDismissed) {
+      _showPermissionPrompt(s.hasRestrictedSettings);
     }
   }
 
-  Future<void> _showPermissionPrompt() async {
-    final open = await showDialog<bool>(
+  Future<void> _showPermissionPrompt(bool restricted) async {
+    _promptVisible = true;
+    const step = TextStyle(fontSize: 14, height: 1.4);
+    final choice = await showDialog<_PermissionStep>(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF111111),
         title: const Text('Turn on ThumbBreak'),
-        content: const Text(
-          'ThumbBreak needs Accessibility access to count Reels & Shorts '
-          'and block them after your daily limit.\n\n'
-          'It only looks at Instagram and YouTube, and only checks which '
-          'screen is open. No text or personal data is collected, and '
-          'nothing leaves your phone.\n\n'
-          'In the next screen: Installed / Downloaded apps → ThumbBreak → '
-          'turn it on.\n\n'
-          'If the switch is greyed out: App info → ThumbBreak → ⋮ menu → '
-          'Allow restricted settings, then try again.',
-          style: TextStyle(fontSize: 14, height: 1.4),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'ThumbBreak needs Accessibility access to count Reels & Shorts '
+                'and block them after your daily limit. It only looks at '
+                'Instagram and YouTube. No text or personal data is collected, '
+                'and nothing leaves your phone.',
+                style: step,
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                '1. Open Accessibility → Installed / Downloaded apps → '
+                'ThumbBreak → turn it on.',
+                style: step,
+              ),
+              if (restricted) ...[
+                const SizedBox(height: 12),
+                const Text(
+                  '2. If it says "Restricted setting" or the switch is greyed '
+                  'out: open App info, tap ⋮ (top right) → Allow restricted '
+                  'settings, then do step 1 again.',
+                  style: step,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'The ⋮ option only appears after you\'ve tried step 1 once.',
+                  style: step.copyWith(fontSize: 12, color: Colors.white54),
+                ),
+              ],
+            ],
+          ),
         ),
+        actionsOverflowDirection: VerticalDirection.up,
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(context, _PermissionStep.notNow),
             child: const Text('Not now'),
           ),
+          if (restricted)
+            OutlinedButton(
+              onPressed: () => Navigator.pop(context, _PermissionStep.appInfo),
+              child: const Text('Allow restricted settings'),
+            ),
           FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Open settings'),
+            onPressed: () =>
+                Navigator.pop(context, _PermissionStep.accessibility),
+            child: const Text('Open Accessibility'),
           ),
         ],
       ),
     );
-    if (open == true) await NativeBridge.openAccessibilitySettings();
+    _promptVisible = false;
+    switch (choice) {
+      case _PermissionStep.accessibility:
+        await NativeBridge.openAccessibilitySettings();
+      case _PermissionStep.appInfo:
+        await NativeBridge.openAppInfo();
+      case _PermissionStep.notNow:
+      case null:
+        _promptDismissed = true;
+    }
   }
 
   Future<void> _changeLimit(int delta) async {
@@ -227,7 +277,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
               if (!s.serviceEnabled) ...[
                 const SizedBox(height: 24),
-                _EnableBanner(onTap: NativeBridge.openAccessibilitySettings),
+                _EnableBanner(onTap: () {
+                  _promptDismissed = false;
+                  if (!_promptVisible) {
+                    _showPermissionPrompt(s.hasRestrictedSettings);
+                  }
+                }),
               ],
               const Spacer(),
               Text(
@@ -281,6 +336,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 }
+
+enum _PermissionStep { accessibility, appInfo, notNow }
 
 class _EnableBanner extends StatelessWidget {
   final VoidCallback onTap;

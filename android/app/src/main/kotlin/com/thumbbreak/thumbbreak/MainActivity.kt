@@ -3,6 +3,8 @@ package com.thumbbreak.thumbbreak
 import android.content.ComponentName
 import android.content.Intent
 import android.content.SharedPreferences
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
@@ -24,7 +26,12 @@ class MainActivity : FlutterActivity() {
 
         MethodChannel(messenger, "thumbbreak/control").setMethodCallHandler { call, result ->
             when (call.method) {
-                "getState" -> result.success(store.toMap() + ("serviceEnabled" to isServiceEnabled()))
+                "getState" -> result.success(
+                    store.toMap() + mapOf(
+                        "serviceEnabled" to isServiceEnabled(),
+                        "sdkInt" to Build.VERSION.SDK_INT,
+                    )
+                )
                 "setLimit" -> {
                     store.limit = call.argument<Int>("limit") ?: store.limit
                     result.success(null)
@@ -32,6 +39,14 @@ class MainActivity : FlutterActivity() {
                 "getViewIds" -> result.success(store.viewIds())
                 "openAccessibilitySettings" -> {
                     startActivity(accessibilitySettingsIntent())
+                    result.success(null)
+                }
+                // App info page, where the ⋮ menu has "Allow restricted settings" (Android 13+).
+                "openAppInfo" -> {
+                    startActivity(
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                            .setData(Uri.fromParts("package", packageName, null))
+                    )
                     result.success(null)
                 }
                 else -> result.notImplemented()
