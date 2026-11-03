@@ -1,6 +1,8 @@
 package com.thumbbreak.thumbbreak
 
 import android.accessibilityservice.AccessibilityService
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -22,6 +24,23 @@ class ShortsBlockerService : AccessibilityService() {
     private var lastCheckAt = 0L
     private var lastBlockAt = 0L
     private var lastCaptureAt = 0L
+
+    private val handler = Handler(Looper.getMainLooper())
+
+    // The service only receives events from Instagram/YouTube (see accessibility_service_config),
+    // so switching to another app produces no event. While the badge is up, poll the
+    // foreground window and drop the badge once it's no longer a target app.
+    private val foregroundCheck = object : Runnable {
+        override fun run() {
+            if (!inViewer) return
+            val pkg = rootInActiveWindow?.packageName
+            if (pkg != null && TargetApp.forPackage(pkg) == null && pkg != packageName) {
+                leaveViewer()
+            } else {
+                handler.postDelayed(this, FOREGROUND_CHECK_MS)
+            }
+        }
+    }
 
     override fun onServiceConnected() {
         store = Store(this)
@@ -57,6 +76,7 @@ class ShortsBlockerService : AccessibilityService() {
         }
         val justEntered = !inViewer
         inViewer = true
+        if (justEntered) handler.postDelayed(foregroundCheck, FOREGROUND_CHECK_MS)
 
         if (store.isLimitReached()) {
             block(now)
@@ -98,6 +118,7 @@ class ShortsBlockerService : AccessibilityService() {
 
     private fun leaveViewer() {
         inViewer = false
+        handler.removeCallbacks(foregroundCheck)
         badge.hide()
     }
 
@@ -113,6 +134,7 @@ class ShortsBlockerService : AccessibilityService() {
     override fun onInterrupt() {}
 
     override fun onDestroy() {
+        handler.removeCallbacks(foregroundCheck)
         badge.hide()
         super.onDestroy()
     }
@@ -123,5 +145,6 @@ class ShortsBlockerService : AccessibilityService() {
         private const val BLOCK_COOLDOWN_MS = 1500L
         private const val CAPTURE_INTERVAL_MS = 2000L
         private const val MAX_CAPTURE_NODES = 600
+        private const val FOREGROUND_CHECK_MS = 1000L
     }
 }
