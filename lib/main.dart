@@ -83,6 +83,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   BreakState _state = const BreakState();
   StreamSubscription<Map<dynamic, dynamic>>? _sub;
+  bool _promptShown = false;
 
   @override
   void initState() {
@@ -110,7 +111,47 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _refresh() async {
     final s = await NativeBridge.getState();
-    if (mounted) setState(() => _state = s);
+    if (!mounted) return;
+    setState(() => _state = s);
+    // Ask for the permission straight away on launch, once per app start.
+    if (!s.serviceEnabled && !_promptShown) {
+      _promptShown = true;
+      _showPermissionPrompt();
+    }
+  }
+
+  Future<void> _showPermissionPrompt() async {
+    final open = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF111111),
+        title: const Text('Turn on ThumbBreak'),
+        content: const Text(
+          'ThumbBreak needs Accessibility access to count Reels & Shorts '
+          'and block them after your daily limit.\n\n'
+          'It only looks at Instagram and YouTube, and only checks which '
+          'screen is open. No text or personal data is collected, and '
+          'nothing leaves your phone.\n\n'
+          'In the next screen: Installed / Downloaded apps → ThumbBreak → '
+          'turn it on.\n\n'
+          'If the switch is greyed out: App info → ThumbBreak → ⋮ menu → '
+          'Allow restricted settings, then try again.',
+          style: TextStyle(fontSize: 14, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Not now'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Open settings'),
+          ),
+        ],
+      ),
+    );
+    if (open == true) await NativeBridge.openAccessibilitySettings();
   }
 
   Future<void> _changeLimit(int delta) async {

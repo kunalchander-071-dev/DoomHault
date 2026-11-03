@@ -3,6 +3,7 @@ package com.thumbbreak.thumbbreak
 import android.content.ComponentName
 import android.content.Intent
 import android.content.SharedPreferences
+import android.os.Bundle
 import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -30,7 +31,7 @@ class MainActivity : FlutterActivity() {
                 }
                 "getViewIds" -> result.success(store.viewIds())
                 "openAccessibilitySettings" -> {
-                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                    startActivity(accessibilitySettingsIntent())
                     result.success(null)
                 }
                 else -> result.notImplemented()
@@ -54,6 +55,17 @@ class MainActivity : FlutterActivity() {
                 }
             }
         )
+    }
+
+    // Many Settings apps scroll to and highlight the entry named by this (unofficial) extra;
+    // others ignore it and just show the Accessibility list.
+    private fun accessibilitySettingsIntent(): Intent {
+        val key = ComponentName(this, ShortsBlockerService::class.java).flattenToString()
+        return Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            .putExtra(":settings:fragment_args_key", key)
+            .putExtra(":settings:show_fragment_args", Bundle().apply {
+                putString(":settings:fragment_args_key", key)
+            })
     }
 
     private fun isServiceEnabled(): Boolean {
