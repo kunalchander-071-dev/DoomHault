@@ -1,6 +1,7 @@
 package com.thumbbreak.thumbbreak
 
 import android.accessibilityservice.AccessibilityService
+import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -26,6 +27,7 @@ class ShortsBlockerService : AccessibilityService() {
     private var lastCheckAt = 0L
     private var lastBlockAt = 0L
     private var lastCaptureAt = 0L
+    private var lastPageKey: Int? = null
 
     private val handler = Handler(Looper.getMainLooper())
 
@@ -97,13 +99,36 @@ class ShortsBlockerService : AccessibilityService() {
             return
         }
 
-        val swiped = event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED
+        val swiped = if (app.pageId != null) {
+            val page = visiblePageKey(root, app, app.pageId)
+            val changed = page != null && lastPageKey != null && page != lastPageKey
+            if (page != null) lastPageKey = page
+            changed
+        } else {
+            event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED
+        }
         if ((justEntered || swiped) && now - lastCountAt > SWIPE_DEBOUNCE_MS) {
             lastCountAt = now
             store.increment(app)
         }
         badge.show(store.total(), store.limit)
         if (store.isLimitReached()) block(now) else captureViewIdsAsync(root, app, now)
+    }
+
+    /**
+     * Identity of the page view taking up most of the screen. Adjacent shorts are always
+     * different views (both are on screen mid-swipe), so a change means a new short.
+     * AccessibilityNodeInfo's hashCode is derived from the source view and window IDs.
+     */
+    private fun visiblePageKey(root: AccessibilityNodeInfo, app: TargetApp, pageId: String): Int? {
+        val bounds = Rect()
+        return root.findAccessibilityNodeInfosByViewId("${app.packageName}:id/$pageId")
+            .filter { it.isVisibleToUser }
+            .maxByOrNull { node ->
+                node.getBoundsInScreen(bounds)
+                bounds.width() * bounds.height()
+            }
+            ?.hashCode()
     }
 
     private fun isViewerVisible(root: AccessibilityNodeInfo, app: TargetApp): Boolean =
@@ -150,6 +175,7 @@ class ShortsBlockerService : AccessibilityService() {
 
     private fun leaveViewer() {
         inViewer = false
+        lastPageKey = null
         handler.removeCallbacks(foregroundCheck)
         badge.hide()
     }
