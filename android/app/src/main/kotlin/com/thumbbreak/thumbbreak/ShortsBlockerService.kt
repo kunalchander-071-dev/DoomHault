@@ -99,15 +99,11 @@ class ShortsBlockerService : AccessibilityService() {
             return
         }
 
-        val swiped = if (app.pageId != null) {
-            val page = visiblePageKey(root, app, app.pageId)
-            val changed = page != null && lastPageKey != null && page != lastPageKey
-            if (page != null) lastPageKey = page
-            changed
-        } else {
-            event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED
-        }
-        if ((justEntered || swiped) && now - lastCountAt > SWIPE_DEBOUNCE_MS) {
+        // Count when a different short fills the screen. lastPageKey survives leaving the
+        // player, so closing comments/share sheets (which briefly hide it) doesn't recount.
+        val page = visiblePageKey(root, app)
+        if (page != null && page != lastPageKey && now - lastCountAt > SWIPE_DEBOUNCE_MS) {
+            lastPageKey = page
             lastCountAt = now
             store.increment(app)
         }
@@ -120,9 +116,9 @@ class ShortsBlockerService : AccessibilityService() {
      * different views (both are on screen mid-swipe), so a change means a new short.
      * AccessibilityNodeInfo's hashCode is derived from the source view and window IDs.
      */
-    private fun visiblePageKey(root: AccessibilityNodeInfo, app: TargetApp, pageId: String): Int? {
+    private fun visiblePageKey(root: AccessibilityNodeInfo, app: TargetApp): Int? {
         val bounds = Rect()
-        return root.findAccessibilityNodeInfosByViewId("${app.packageName}:id/$pageId")
+        return root.findAccessibilityNodeInfosByViewId("${app.packageName}:id/${app.pageId}")
             .filter { it.isVisibleToUser }
             .maxByOrNull { node ->
                 node.getBoundsInScreen(bounds)
@@ -175,7 +171,6 @@ class ShortsBlockerService : AccessibilityService() {
 
     private fun leaveViewer() {
         inViewer = false
-        lastPageKey = null
         handler.removeCallbacks(foregroundCheck)
         badge.hide()
     }
