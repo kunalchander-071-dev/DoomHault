@@ -27,7 +27,7 @@ class ShortsBlockerService : AccessibilityService() {
     private var lastCheckAt = 0L
     private var lastBlockAt = 0L
     private var lastCaptureAt = 0L
-    private var lastPageKey: Int? = null
+    private var lastPageKey: String? = null
 
     private val handler = Handler(Looper.getMainLooper())
 
@@ -112,19 +112,59 @@ class ShortsBlockerService : AccessibilityService() {
     }
 
     /**
-     * Identity of the page view taking up most of the screen. Adjacent shorts are always
-     * different views (both are on screen mid-swipe), so a change means a new short.
-     * AccessibilityNodeInfo's hashCode is derived from the source view and window IDs.
+     * Identifies the short on screen by its labels (see [TargetApp]). Null mid-swipe (two pages
+     * visible) or when no labels are found, so nothing is counted until the screen settles.
+     * Labels are only compared in memory, never stored.
      */
-    private fun visiblePageKey(root: AccessibilityNodeInfo, app: TargetApp): Int? {
-        val bounds = Rect()
-        return root.findAccessibilityNodeInfosByViewId("${app.packageName}:id/${app.pageId}")
+    private fun visiblePageKey(root: AccessibilityNodeInfo, app: TargetApp): String? {
+        val page = root.findAccessibilityNodeInfosByViewId("${app.packageName}:id/${app.pageId}")
             .filter { it.isVisibleToUser }
-            .maxByOrNull { node ->
-                node.getBoundsInScreen(bounds)
-                bounds.width() * bounds.height()
+            .singleOrNull() ?: return null
+        val labels = if (app.keyIds.isNotEmpty()) {
+            app.keyIds.mapNotNull { id ->
+                root.findAccessibilityNodeInfosByViewId("${app.packageName}:id/$id")
+                    .firstOrNull { it.isVisibleToUser }
+                    ?.let(::firstLabel)
             }
-            ?.hashCode()
+        } else {
+            listOfNotNull(longestInfoLabel(root, page))
+        }
+        return labels.takeIf { it.isNotEmpty() }?.joinToString("|") { it.take(KEY_LABEL_CHARS) }
+    }
+
+    /** First non-empty text/description in [node]'s subtree. */
+    private fun firstLabel(node: AccessibilityNodeInfo): String? {
+        val queue = ArrayDeque<AccessibilityNodeInfo>().apply { add(node) }
+        var visited = 0
+        while (queue.isNotEmpty() && visited++ < MAX_KEY_NODES) {
+            val n = queue.removeFirst()
+            (n.text ?: n.contentDescription)?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+                ?.let { return it }
+            for (i in 0 until n.childCount) n.getChild(i)?.let(queue::add)
+        }
+        return null
+    }
+
+    /**
+     * Longest label in the page's left-hand info area (title/caption). The right-hand column
+     * holds like/comment/share buttons whose counts change, so it's skipped.
+     */
+    private fun longestInfoLabel(root: AccessibilityNodeInfo, page: AccessibilityNodeInfo): String? {
+        val screen = Rect().also(root::getBoundsInScreen)
+        val bounds = Rect()
+        var best: String? = null
+        val queue = ArrayDeque<AccessibilityNodeInfo>().apply { add(page) }
+        var visited = 0
+        while (queue.isNotEmpty() && visited++ < MAX_KEY_NODES) {
+            val n = queue.removeFirst()
+            n.getBoundsInScreen(bounds)
+            val label = (n.text ?: n.contentDescription)?.toString()?.trim()
+            if (!label.isNullOrEmpty() && bounds.right < screen.width() * INFO_AREA_RIGHT &&
+                label.length > (best?.length ?: 0)
+            ) best = label
+            for (i in 0 until n.childCount) n.getChild(i)?.let(queue::add)
+        }
+        return best
     }
 
     private fun isViewerVisible(root: AccessibilityNodeInfo, app: TargetApp): Boolean =
@@ -200,5 +240,8 @@ class ShortsBlockerService : AccessibilityService() {
         private const val CAPTURE_INTERVAL_MS = 5000L
         private const val MAX_CAPTURE_NODES = 600
         private const val FOREGROUND_CHECK_MS = 1000L
+        private const val MAX_KEY_NODES = 40
+        private const val KEY_LABEL_CHARS = 40
+        private const val INFO_AREA_RIGHT = 0.8f
     }
 }
