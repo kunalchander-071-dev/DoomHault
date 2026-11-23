@@ -23,11 +23,13 @@ class ShortsBlockerService : AccessibilityService() {
     private lateinit var badge: CounterBadge
 
     private var inViewer = false
-    private var lastCountAt = 0L
     private var lastCheckAt = 0L
     private var lastBlockAt = 0L
     private var lastCaptureAt = 0L
-    private var lastPageKey: String? = null
+    private var lastPageKey: List<String?>? = null
+    private var pendingKey: List<String?>? = null
+    private var pendingSince = 0L
+    private val recentKeys = ArrayDeque<List<String?>>()
 
     private val handler = Handler(Looper.getMainLooper())
 
@@ -99,38 +101,67 @@ class ShortsBlockerService : AccessibilityService() {
             return
         }
 
-        // Count when a different short fills the screen. lastPageKey survives leaving the
-        // player, so closing comments/share sheets (which briefly hide it) doesn't recount.
+        // Count when a different short has settled on screen. Transient keys (sheets opening or
+        // closing, mid-swipe) must persist for SETTLE_MS, and shorts seen recently — including
+        // the current one after returning to the player — are never recounted.
         val page = visiblePageKey(root, app)
-        if (page != null && page != lastPageKey && now - lastCountAt > SWIPE_DEBOUNCE_MS) {
+        val last = lastPageKey
+        if (page == null || (last != null && sameShort(page, last))) {
+            // Keep the fuller key once a late-loading caption appears.
+            if (page != null && page.count { it != null } > last!!.count { it != null }) {
+                lastPageKey = page
+            }
+            pendingKey = null
+        } else if (pendingKey?.let { sameShort(page, it) } != true) {
+            pendingKey = page
+            pendingSince = now
+        } else if (now - pendingSince >= SETTLE_MS) {
             lastPageKey = page
-            lastCountAt = now
-            store.increment(app)
+            pendingKey = null
+            if (recentKeys.none { sameShort(it, page) }) {
+                recentKeys.addLast(page)
+                if (recentKeys.size > RECENT_KEYS) recentKeys.removeFirst()
+                store.increment(app)
+            }
         }
         badge.show(store.total(), store.limit)
         if (store.isLimitReached()) block(now) else captureViewIdsAsync(root, app, now)
     }
 
     /**
-     * Identifies the short on screen by its labels (see [TargetApp]). Null mid-swipe (two pages
-     * visible) or when no labels are found, so nothing is counted until the screen settles.
-     * Labels are only compared in memory, never stored.
+     * Identifies the short on screen by its labels (see [TargetApp]): the first part (author or
+     * title) is required, later ones (caption) are optional since not every reel has one. Null
+     * mid-swipe (two pages visible) or when the first part is missing, so nothing is counted
+     * until the screen settles. Labels are only compared in memory, never stored.
      */
-    private fun visiblePageKey(root: AccessibilityNodeInfo, app: TargetApp): String? {
+    private fun visiblePageKey(root: AccessibilityNodeInfo, app: TargetApp): List<String?>? {
         val page = root.findAccessibilityNodeInfosByViewId("${app.packageName}:id/${app.pageId}")
             .filter { it.isVisibleToUser }
             .singleOrNull() ?: return null
         val labels = if (app.keyIds.isNotEmpty()) {
-            app.keyIds.mapNotNull { id ->
+            // On-screen by position, not isVisibleToUser: a caption covered by a comments or
+            // share sheet must still yield the same key.
+            val screen = Rect().also(root::getBoundsInScreen)
+            val bounds = Rect()
+            app.keyIds.map { id ->
                 root.findAccessibilityNodeInfosByViewId("${app.packageName}:id/$id")
-                    .firstOrNull { it.isVisibleToUser }
+                    .firstOrNull { node ->
+                        node.getBoundsInScreen(bounds)
+                        bounds.top >= screen.top && bounds.bottom <= screen.bottom
+                    }
                     ?.let(::firstLabel)
             }
         } else {
-            listOfNotNull(longestInfoLabel(root, page))
+            listOf(longestInfoLabel(root, page))
         }
-        return labels.takeIf { it.isNotEmpty() }?.joinToString("|") { it.take(KEY_LABEL_CHARS) }
+        if (labels.first() == null) return null
+        return labels.map { it?.take(KEY_LABEL_CHARS) }
     }
+
+    /** Same short if the first parts match and every part present in both matches. */
+    private fun sameShort(a: List<String?>, b: List<String?>): Boolean =
+        a.first() == b.first() &&
+            a.indices.all { a[it] == null || b.getOrNull(it) == null || a[it] == b[it] }
 
     /** First non-empty text/description in [node]'s subtree. */
     private fun firstLabel(node: AccessibilityNodeInfo): String? {
@@ -146,8 +177,9 @@ class ShortsBlockerService : AccessibilityService() {
     }
 
     /**
-     * Longest label in the page's left-hand info area (title/caption). The right-hand column
-     * holds like/comment/share buttons whose counts change, so it's skipped.
+     * Longest label starting at the page's left edge (title, else channel). Labels starting
+     * further right are skipped: the Subscribe button (changes when tapped, same for every
+     * short of a channel) and the like/comment/share column (counts change).
      */
     private fun longestInfoLabel(root: AccessibilityNodeInfo, page: AccessibilityNodeInfo): String? {
         val screen = Rect().also(root::getBoundsInScreen)
@@ -159,7 +191,7 @@ class ShortsBlockerService : AccessibilityService() {
             val n = queue.removeFirst()
             n.getBoundsInScreen(bounds)
             val label = (n.text ?: n.contentDescription)?.toString()?.trim()
-            if (!label.isNullOrEmpty() && bounds.right < screen.width() * INFO_AREA_RIGHT &&
+            if (!label.isNullOrEmpty() && bounds.left < screen.width() * INFO_AREA_LEFT &&
                 label.length > (best?.length ?: 0)
             ) best = label
             for (i in 0 until n.childCount) n.getChild(i)?.let(queue::add)
@@ -234,14 +266,15 @@ class ShortsBlockerService : AccessibilityService() {
     }
 
     companion object {
-        private const val SWIPE_DEBOUNCE_MS = 800L
         private const val CHECK_THROTTLE_MS = 300L
         private const val BLOCK_COOLDOWN_MS = 1500L
         private const val CAPTURE_INTERVAL_MS = 5000L
         private const val MAX_CAPTURE_NODES = 600
         private const val FOREGROUND_CHECK_MS = 1000L
+        private const val SETTLE_MS = 600L
+        private const val RECENT_KEYS = 5
         private const val MAX_KEY_NODES = 40
         private const val KEY_LABEL_CHARS = 40
-        private const val INFO_AREA_RIGHT = 0.8f
+        private const val INFO_AREA_LEFT = 0.3f
     }
 }

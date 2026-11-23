@@ -6,8 +6,8 @@ package com.thumbbreak.thumbbreak
  * verify with `adb shell uiautomator dump` or Android Studio's Layout Inspector.
  *
  * [pageId] is the view wrapping one short (one per pager page). A short is identified by its
- * labels — [keyIds] (e.g. author + caption) or, when empty, the longest label in the page's
- * left-hand info area (the title) — and counted when that changes. View identity isn't enough:
+ * labels — [keyIds] (author required, caption optional) or, when empty, the longest label
+ * starting at the page's left edge (the title) — and counted when that changes. View identity isn't enough:
  * Instagram rebuilds the page after comment/share sheets close. Scroll events aren't used:
  * YouTube's Shorts swipes don't reach the service as scroll events.
  */
