@@ -19,7 +19,8 @@ enum class TargetApp(
 ) {
     INSTAGRAM(
         "com.instagram.android",
-        listOf("clips_viewer_view_pager", "clips_video_container"),
+        // Only the full-screen pager: clips_video_container also appears on inline feed reels.
+        listOf("clips_viewer_view_pager"),
         pageId = "clips_media_component",
         keyIds = listOf("clips_author_username", "clips_caption_component"),
     ),

@@ -38,7 +38,7 @@ class MainActivity : FlutterActivity() {
                 }
                 "getViewIds" -> result.success(store.viewIds())
                 "openAccessibilitySettings" -> {
-                    startActivity(accessibilitySettingsIntent())
+                    startActivity(accessibilitySettingsIntent().addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                     result.success(null)
                 }
                 // App info page, where the ⋮ menu has "Allow restricted settings" (Android 13+).
@@ -46,6 +46,7 @@ class MainActivity : FlutterActivity() {
                     startActivity(
                         Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
                             .setData(Uri.fromParts("package", packageName, null))
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     )
                     result.success(null)
                 }

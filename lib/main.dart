@@ -95,6 +95,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // Prompt on launch, and again on return from Settings while still off — until "Not now".
   bool _promptVisible = false;
   bool _promptDismissed = false;
+  BuildContext? _promptContext;
 
   @override
   void initState() {
@@ -124,6 +125,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final s = await NativeBridge.getState();
     if (!mounted) return;
     setState(() => _state = s);
+    // Turned on while the prompt was up (e.g. via the accessibility shortcut) — close it.
+    if (s.serviceEnabled && _promptVisible && _promptContext != null) {
+      Navigator.pop(_promptContext!, _PermissionStep.alreadyOn);
+      return;
+    }
     if (!s.serviceEnabled && !_promptVisible && !_promptDismissed) {
       _showPermissionPrompt(s.hasRestrictedSettings);
     }
@@ -135,7 +141,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final choice = await showDialog<_PermissionStep>(
       context: context,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
+      builder: (context) {
+        _promptContext = context;
+        return AlertDialog(
         backgroundColor: const Color(0xFF111111),
         title: const Text('Turn on ThumbBreak'),
         content: SingleChildScrollView(
@@ -146,8 +154,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               const Text(
                 'ThumbBreak needs Accessibility access to count Reels & Shorts '
                 'and block them after your daily limit. It only looks at '
-                'Instagram and YouTube. No text or personal data is collected, '
-                'and nothing leaves your phone.',
+                'Instagram and YouTube, and only reads on-screen labels (like a '
+                'reel\'s author or title) to tell one reel from the next. '
+                'Nothing is saved, and nothing leaves your phone.',
                 style: step,
               ),
               const SizedBox(height: 16),
@@ -190,14 +199,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             child: const Text('Open Accessibility'),
           ),
         ],
-      ),
+      );
+      },
     );
     _promptVisible = false;
+    _promptContext = null;
     switch (choice) {
       case _PermissionStep.accessibility:
         await NativeBridge.openAccessibilitySettings();
       case _PermissionStep.appInfo:
         await NativeBridge.openAppInfo();
+      case _PermissionStep.alreadyOn:
+        break;
       case _PermissionStep.notNow:
       case null:
         _promptDismissed = true;
@@ -337,7 +350,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 }
 
-enum _PermissionStep { accessibility, appInfo, notNow }
+enum _PermissionStep { accessibility, appInfo, notNow, alreadyOn }
 
 class _EnableBanner extends StatelessWidget {
   final VoidCallback onTap;

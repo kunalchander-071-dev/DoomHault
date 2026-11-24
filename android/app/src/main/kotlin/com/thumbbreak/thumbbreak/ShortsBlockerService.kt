@@ -158,10 +158,15 @@ class ShortsBlockerService : AccessibilityService() {
         } else {
             state = "settling"
         }
-        // A playing short emits few or no events, so don't wait for one to confirm the pending
-        // key — re-check once it has had time to settle.
-        if (pendingKey != null && detectScheduled.compareAndSet(false, true)) {
-            worker.postDelayed(detectPass, pendingSince + SETTLE_MS - now)
+        // A playing short emits few or no events, so don't wait for one: re-check once a pending
+        // key has had time to settle, or shortly after the key couldn't be read (mid-swipe).
+        val recheckIn = when {
+            pendingKey != null -> pendingSince + SETTLE_MS - now
+            page == null -> SETTLE_MS
+            else -> null
+        }
+        if (recheckIn != null && detectScheduled.compareAndSet(false, true)) {
+            worker.postDelayed(detectPass, recheckIn.coerceAtLeast(0))
         }
         val total = store.total()
         val limit = store.limit
