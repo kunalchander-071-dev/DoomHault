@@ -3,8 +3,10 @@ package com.thumbbreak.thumbbreak
 import android.accessibilityservice.AccessibilityService
 import android.graphics.Rect
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
@@ -23,7 +25,7 @@ class ShortsBlockerService : AccessibilityService() {
     private lateinit var badge: CounterBadge
 
     private var inViewer = false
-    private var lastCheckAt = 0L
+    @Volatile private var lastCheckAt = 0L
     private var lastBlockAt = 0L
     private var lastCaptureAt = 0L
     private var lastPageKey: List<String?>? = null
@@ -31,10 +33,17 @@ class ShortsBlockerService : AccessibilityService() {
     private var pendingSince = 0L
     private val recentKeys = ArrayDeque<List<String?>>()
 
+    // Main thread: receives events and owns the badge. Every node lookup is a blocking IPC into
+    // Instagram/YouTube (slow while video plays), so detection runs on [worker]; events that
+    // arrive while it's busy are coalesced into one pass instead of queuing on the main thread.
     private val handler = Handler(Looper.getMainLooper())
+    private val workerThread = HandlerThread("thumbbreak-detect").apply { start() }
+    private val worker = Handler(workerThread.looper)
+    private val detectScheduled = AtomicBoolean(false)
+    @Volatile private var latestApp: TargetApp? = null
 
     // Walking the whole view tree is hundreds of IPC calls (slow on Instagram's large tree),
-    // so diagnostics run off the main thread and never delay counting or the badge.
+    // so diagnostics run on their own thread, rarely.
     private val captureExecutor = Executors.newSingleThreadExecutor()
     private val capturing = AtomicBoolean(false)
 
@@ -43,17 +52,30 @@ class ShortsBlockerService : AccessibilityService() {
 
     // The service only receives events from Instagram/YouTube (see accessibility_service_config),
     // so switching to another app produces no event. While the badge is up, poll the
-    // foreground window and drop the badge once it's no longer a target app.
+    // foreground window (on the worker) and drop the badge once it's no longer a target app.
     private val foregroundCheck = object : Runnable {
         override fun run() {
             if (!inViewer) return
             val pkg = rootInActiveWindow?.packageName
             if (pkg != null && TargetApp.forPackage(pkg) == null && pkg != packageName) {
+                Log.d(TAG, "left to $pkg")
                 leaveViewer()
             } else {
-                handler.postDelayed(this, FOREGROUND_CHECK_MS)
+                worker.postDelayed(this, FOREGROUND_CHECK_MS)
             }
         }
+    }
+
+    private val detectPass = Runnable {
+        detectScheduled.set(false)
+        val app = latestApp ?: return@Runnable
+        val start = SystemClock.uptimeMillis()
+        val result = try {
+            detect(app, start)
+        } catch (e: Exception) {
+            "error ${e.javaClass.simpleName}"
+        }
+        Log.d(TAG, "${app.name} $result took=${SystemClock.uptimeMillis() - start}ms")
     }
 
     override fun onServiceConnected() {
@@ -68,10 +90,9 @@ class ShortsBlockerService : AccessibilityService() {
             // Our own badge/toast also fire events; ignore those.
             if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
                 event.packageName != packageName
-            ) leaveViewer()
+            ) worker.post { leaveViewer() }
             return
         }
-        val now = SystemClock.uptimeMillis()
         eventCounts.getValue(app).let { c ->
             when (event.eventType) {
                 AccessibilityEvent.TYPE_VIEW_SCROLLED -> c[0]++
@@ -79,26 +100,31 @@ class ShortsBlockerService : AccessibilityService() {
                 AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> c[2]++
             }
         }
+        latestApp = app
+        // At most one pending pass, and at most one every CHECK_THROTTLE_MS.
+        if (detectScheduled.compareAndSet(false, true)) {
+            val wait = (lastCheckAt + CHECK_THROTTLE_MS - SystemClock.uptimeMillis())
+                .coerceAtLeast(0)
+            worker.postDelayed(detectPass, wait)
+        }
+    }
 
-        // Content-changed events fire constantly; don't walk the view tree for every one.
-        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
-            now - lastCheckAt < CHECK_THROTTLE_MS
-        ) return
+    /** One detection pass on the worker thread. Returns a short summary for the log. */
+    private fun detect(app: TargetApp, now: Long): String {
         lastCheckAt = now
-
-        val root = rootInActiveWindow ?: return
+        val root = rootInActiveWindow ?: return "no-root"
         if (!isViewerVisible(root, app)) {
             captureViewIdsAsync(root, app, now)
             leaveViewer()
-            return
+            return "viewer=no"
         }
         val justEntered = !inViewer
         inViewer = true
-        if (justEntered) handler.postDelayed(foregroundCheck, FOREGROUND_CHECK_MS)
+        if (justEntered) worker.postDelayed(foregroundCheck, FOREGROUND_CHECK_MS)
 
         if (store.isLimitReached()) {
             block(now)
-            return
+            return "viewer=yes limit"
         }
 
         // Count when a different short has settled on screen. Transient keys (sheets opening or
@@ -106,15 +132,18 @@ class ShortsBlockerService : AccessibilityService() {
         // the current one after returning to the player — are never recounted.
         val page = visiblePageKey(root, app)
         val last = lastPageKey
+        var state: String
         if (page == null || (last != null && sameShort(page, last))) {
             // Keep the fuller key once a late-loading caption appears.
             if (page != null && page.count { it != null } > last!!.count { it != null }) {
                 lastPageKey = page
             }
             pendingKey = null
+            state = if (page == null) "key=none" else "same"
         } else if (pendingKey?.let { sameShort(page, it) } != true) {
             pendingKey = page
             pendingSince = now
+            state = "new-pending"
         } else if (now - pendingSince >= SETTLE_MS) {
             lastPageKey = page
             pendingKey = null
@@ -122,10 +151,19 @@ class ShortsBlockerService : AccessibilityService() {
                 recentKeys.addLast(page)
                 if (recentKeys.size > RECENT_KEYS) recentKeys.removeFirst()
                 store.increment(app)
+                state = "COUNTED"
+            } else {
+                state = "recent"
             }
+        } else {
+            state = "settling"
         }
-        badge.show(store.total(), store.limit)
-        if (store.isLimitReached()) block(now) else captureViewIdsAsync(root, app, now)
+        val total = store.total()
+        val limit = store.limit
+        handler.post { badge.show(total, limit) }
+        if (store.isLimitReached()) block(now)
+        // Keys are logged as a hash only — never caption or title text.
+        return "viewer=yes $state key=#${page?.hashCode()?.toString(16)} total=$total"
     }
 
     /**
@@ -241,34 +279,40 @@ class ShortsBlockerService : AccessibilityService() {
         store.saveViewIds(app, summary + "\n" + ids.joinToString("\n"))
     }
 
+    /** Worker thread only. */
     private fun leaveViewer() {
         inViewer = false
-        handler.removeCallbacks(foregroundCheck)
-        badge.hide()
+        worker.removeCallbacks(foregroundCheck)
+        handler.post { badge.hide() }
     }
 
+    /** Worker thread only. */
     private fun block(now: Long) {
         // One Back per block window, so we don't back out of the whole app.
         if (now - lastBlockAt < BLOCK_COOLDOWN_MS) return
         lastBlockAt = now
         leaveViewer()
         performGlobalAction(GLOBAL_ACTION_BACK)
-        Toast.makeText(this, "Daily limit reached — take a break", Toast.LENGTH_SHORT).show()
+        handler.post {
+            Toast.makeText(this, "Daily limit reached — take a break", Toast.LENGTH_SHORT).show()
+        }
     }
 
     override fun onInterrupt() {}
 
     override fun onDestroy() {
-        handler.removeCallbacks(foregroundCheck)
+        worker.removeCallbacksAndMessages(null)
+        workerThread.quitSafely()
         captureExecutor.shutdownNow()
         badge.hide()
         super.onDestroy()
     }
 
     companion object {
+        private const val TAG = "ThumbBreak"
         private const val CHECK_THROTTLE_MS = 300L
         private const val BLOCK_COOLDOWN_MS = 1500L
-        private const val CAPTURE_INTERVAL_MS = 5000L
+        private const val CAPTURE_INTERVAL_MS = 30_000L
         private const val MAX_CAPTURE_NODES = 600
         private const val FOREGROUND_CHECK_MS = 1000L
         private const val SETTLE_MS = 600L
