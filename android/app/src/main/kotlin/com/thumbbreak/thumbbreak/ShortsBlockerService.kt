@@ -158,6 +158,11 @@ class ShortsBlockerService : AccessibilityService() {
         } else {
             state = "settling"
         }
+        // A playing short emits few or no events, so don't wait for one to confirm the pending
+        // key — re-check once it has had time to settle.
+        if (pendingKey != null && detectScheduled.compareAndSet(false, true)) {
+            worker.postDelayed(detectPass, pendingSince + SETTLE_MS - now)
+        }
         val total = store.total()
         val limit = store.limit
         handler.post { badge.show(total, limit) }
