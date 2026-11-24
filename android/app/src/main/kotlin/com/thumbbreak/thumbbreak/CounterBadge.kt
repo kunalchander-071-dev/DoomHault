@@ -22,7 +22,7 @@ class CounterBadge(private val service: AccessibilityService) {
 
     fun show(count: Int, limit: Int) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) return
-        val badge = view ?: create().also { view = it }
+        val badge = view ?: create()?.also { view = it } ?: return
         badge.text = "$count / $limit"
         (badge.background as GradientDrawable).setColor(
             if (limit - count <= WARN_REMAINING) WARN_COLOR else NORMAL_COLOR
@@ -30,11 +30,17 @@ class CounterBadge(private val service: AccessibilityService) {
     }
 
     fun hide() {
-        view?.let { windowManager.removeViewImmediate(it) }
+        view?.let { runCatching { windowManager.removeViewImmediate(it) } }
         view = null
     }
 
-    private fun create(): TextView {
+    /**
+     * Null if the overlay can't be added: its window token belongs to the service's connection,
+     * which can drop between scheduling and drawing (service turned off or rebound, or UI
+     * automation suppressing accessibility services). Adding then throws BadTokenException,
+     * which would crash the app — and Android disables accessibility services that crash.
+     */
+    private fun create(): TextView? {
         val badge = TextView(service).apply {
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
@@ -54,8 +60,12 @@ class CounterBadge(private val service: AccessibilityService) {
             x = dp(16)
             y = dp(96)
         }
-        windowManager.addView(badge, params)
-        return badge
+        return try {
+            windowManager.addView(badge, params)
+            badge
+        } catch (e: WindowManager.BadTokenException) {
+            null
+        }
     }
 
     private fun dp(value: Int): Int = TypedValue.applyDimension(

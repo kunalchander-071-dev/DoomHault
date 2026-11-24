@@ -1,6 +1,7 @@
 package com.thumbbreak.thumbbreak
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Intent
 import android.graphics.Rect
 import android.os.Handler
 import android.os.HandlerThread
@@ -78,9 +79,21 @@ class ShortsBlockerService : AccessibilityService() {
         Log.d(TAG, "${app.name} $result took=${SystemClock.uptimeMillis() - start}ms")
     }
 
+    // Overlays can only be added while connected; posted badge updates check this first.
+    @Volatile private var connected = false
+
     override fun onServiceConnected() {
         store = Store(this)
         badge = CounterBadge(this)
+        connected = true
+        Log.d(TAG, "service connected")
+    }
+
+    override fun onUnbind(intent: Intent?): Boolean {
+        connected = false
+        Log.d(TAG, "service unbound")
+        handler.post { if (::badge.isInitialized) badge.hide() }
+        return super.onUnbind(intent)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
@@ -170,7 +183,7 @@ class ShortsBlockerService : AccessibilityService() {
         }
         val total = store.total()
         val limit = store.limit
-        handler.post { badge.show(total, limit) }
+        handler.post { if (connected) badge.show(total, limit) }
         if (store.isLimitReached()) block(now)
         // Keys are logged as a hash only — never caption or title text.
         return "viewer=yes $state key=#${page?.hashCode()?.toString(16)} total=$total"
@@ -314,7 +327,8 @@ class ShortsBlockerService : AccessibilityService() {
         worker.removeCallbacksAndMessages(null)
         workerThread.quitSafely()
         captureExecutor.shutdownNow()
-        badge.hide()
+        connected = false
+        if (::badge.isInitialized) badge.hide()
         super.onDestroy()
     }
 
