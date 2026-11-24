@@ -1,42 +1,60 @@
 package com.thumbbreak.thumbbreak
 
 import android.content.ComponentName
+import android.content.ContentValues
 import android.content.Intent
-import android.content.SharedPreferences
+import android.database.ContentObserver
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
+/**
+ * The UI process. Counts and the limit live in the `:service` process and are read and written
+ * through [StateProvider] (see AndroidManifest for why).
+ */
 class MainActivity : FlutterActivity() {
 
-    private lateinit var store: Store
-
-    // SharedPreferences holds listeners weakly, so keep a strong reference.
-    private var prefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
+    private var stateObserver: ContentObserver? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        store = Store(this)
         val messenger = flutterEngine.dartExecutor.binaryMessenger
 
         MethodChannel(messenger, "thumbbreak/control").setMethodCallHandler { call, result ->
             when (call.method) {
                 "getState" -> result.success(
-                    store.toMap() + mapOf(
+                    readState() + mapOf(
                         "serviceEnabled" to isServiceEnabled(),
                         "sdkInt" to Build.VERSION.SDK_INT,
                     )
                 )
                 "setLimit" -> {
-                    store.limit = call.argument<Int>("limit") ?: store.limit
+                    call.argument<Int>("limit")?.let { limit ->
+                        contentResolver.update(
+                            StateProvider.uri(this),
+                            ContentValues().apply { put(StateProvider.COL_LIMIT, limit) },
+                            null,
+                            null,
+                        )
+                    }
                     result.success(null)
                 }
-                "getViewIds" -> result.success(store.viewIds())
+                "getViewIds" -> {
+                    val ids = contentResolver.call(
+                        StateProvider.uri(this), StateProvider.METHOD_VIEW_IDS, null, null
+                    )
+                    result.success(
+                        ids?.let { b -> b.keySet().associateWith { b.getString(it) ?: "" } }
+                            ?: emptyMap<String, String>()
+                    )
+                }
                 "openAccessibilitySettings" -> {
                     startActivity(accessibilitySettingsIntent().addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                     result.success(null)
@@ -54,23 +72,43 @@ class MainActivity : FlutterActivity() {
             }
         }
 
-        // Live counter: push a fresh snapshot whenever the service writes a new count.
+        // Live counter: push a fresh snapshot whenever the service changes a count or the limit.
         EventChannel(messenger, "thumbbreak/state").setStreamHandler(
             object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
-                    prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
-                        runOnUiThread { events.success(store.toMap()) }
+                    val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+                        override fun onChange(selfChange: Boolean) {
+                            events.success(readState())
+                        }
                     }
-                    store.prefs.registerOnSharedPreferenceChangeListener(prefsListener)
-                    events.success(store.toMap())
+                    stateObserver = observer
+                    contentResolver.registerContentObserver(
+                        StateProvider.uri(this@MainActivity), false, observer
+                    )
+                    events.success(readState())
                 }
 
                 override fun onCancel(arguments: Any?) {
-                    store.prefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
-                    prefsListener = null
+                    stateObserver?.let(contentResolver::unregisterContentObserver)
+                    stateObserver = null
                 }
             }
         )
+    }
+
+    override fun onDestroy() {
+        stateObserver?.let(contentResolver::unregisterContentObserver)
+        stateObserver = null
+        super.onDestroy()
+    }
+
+    /** Today's counts and the limit from [StateProvider]; zeros if it can't be reached. */
+    private fun readState(): Map<String, Any> {
+        val columns = listOf(StateProvider.COL_INSTAGRAM, StateProvider.COL_YOUTUBE, StateProvider.COL_LIMIT)
+        contentResolver.query(StateProvider.uri(this), null, null, null, null)?.use { c ->
+            if (c.moveToFirst()) return columns.associateWith { c.getInt(c.getColumnIndexOrThrow(it)) }
+        }
+        return emptyMap()
     }
 
     // Many Settings apps scroll to and highlight the entry named by this (unofficial) extra;

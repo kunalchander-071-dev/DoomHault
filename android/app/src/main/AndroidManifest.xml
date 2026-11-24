@@ -21,10 +21,13 @@
             </intent-filter>
         </activity>
 
+        <!-- The service runs in its own lightweight process, so the Flutter UI (engine, graphics)
+             is only loaded while ThumbBreak's screen is open and can be freed afterwards. -->
         <service
             android:name=".ShortsBlockerService"
             android:label="ThumbBreak"
             android:exported="true"
+            android:process=":service"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
@@ -33,6 +36,14 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service_config" />
         </service>
+
+        <!-- Owns the counts and limit, in the service's process: SharedPreferences don't stay in
+             sync across processes, so the UI reads/writes through this instead. -->
+        <provider
+            android:name=".StateProvider"
+            android:authorities="${applicationId}.state"
+            android:exported="false"
+            android:process=":service" />
 
         <meta-data
             android:name="flutterEmbedding"

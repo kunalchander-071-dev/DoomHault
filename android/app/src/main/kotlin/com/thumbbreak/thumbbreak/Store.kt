@@ -6,10 +6,19 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** Today's counts + the daily limit, persisted in SharedPreferences. Resets at local midnight. */
+/**
+ * Today's counts + the daily limit, persisted in SharedPreferences. Resets at local midnight.
+ * Only used in the `:service` process (the service and [StateProvider]); the UI goes through
+ * [StateProvider], since SharedPreferences don't stay in sync across processes.
+ */
 class Store(context: Context) {
-    val prefs: SharedPreferences =
-        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    private val appContext = context.applicationContext
+    private val prefs: SharedPreferences =
+        appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    /** Tells the UI (observing [StateProvider]) that counts or the limit changed. */
+    private fun notifyChanged() =
+        appContext.contentResolver.notifyChange(StateProvider.uri(appContext), null)
 
     private fun today(): String = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
 
@@ -21,12 +30,16 @@ class Store(context: Context) {
                 .putInt(KEY_INSTAGRAM, 0)
                 .putInt(KEY_YOUTUBE, 0)
                 .apply()
+            notifyChanged()
         }
     }
 
     var limit: Int
         get() = prefs.getInt(KEY_LIMIT, DEFAULT_LIMIT)
-        set(value) = prefs.edit().putInt(KEY_LIMIT, value).apply()
+        set(value) {
+            prefs.edit().putInt(KEY_LIMIT, value).apply()
+            notifyChanged()
+        }
 
     fun total(): Int {
         rollover()
@@ -39,11 +52,12 @@ class Store(context: Context) {
         rollover()
         val key = if (app == TargetApp.INSTAGRAM) KEY_INSTAGRAM else KEY_YOUTUBE
         prefs.edit().putInt(key, prefs.getInt(key, 0) + 1).apply()
+        notifyChanged()
     }
 
-    // Diagnostics live in a separate file so writing them doesn't fire the live-count listener.
+    // Diagnostics and recent-short hashes, kept apart from the counts.
     private val debugPrefs: SharedPreferences =
-        context.applicationContext.getSharedPreferences(DEBUG_PREFS, Context.MODE_PRIVATE)
+        appContext.getSharedPreferences(DEBUG_PREFS, Context.MODE_PRIVATE)
 
     fun saveViewIds(app: TargetApp, ids: String) =
         debugPrefs.edit().putString(app.name, ids).apply()
@@ -53,7 +67,7 @@ class Store(context: Context) {
 
     /**
      * Recently counted shorts, as label hashes (no text), so a service restart doesn't recount
-     * the one on screen. Stored with the diagnostics so writes don't fire the live-count listener.
+     * the one on screen.
      * Format: shorts separated by ";", parts by "," ("-" = missing part).
      */
     fun saveRecentShorts(keys: Collection<List<Int?>>) =
