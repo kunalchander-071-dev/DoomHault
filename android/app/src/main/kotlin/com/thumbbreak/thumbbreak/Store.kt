@@ -51,6 +51,20 @@ class Store(context: Context) {
     fun viewIds(): Map<String, String> =
         TargetApp.entries.associate { it.name to (debugPrefs.getString(it.name, null) ?: "") }
 
+    /**
+     * Recently counted shorts, as label hashes (no text), so a service restart doesn't recount
+     * the one on screen. Stored with the diagnostics so writes don't fire the live-count listener.
+     * Format: shorts separated by ";", parts by "," ("-" = missing part).
+     */
+    fun saveRecentShorts(keys: Collection<List<Int?>>) =
+        debugPrefs.edit().putString(KEY_RECENT, keys.joinToString(";") { key ->
+            key.joinToString(",") { it?.toString() ?: "-" }
+        }).apply()
+
+    fun recentShorts(): List<List<Int?>> =
+        debugPrefs.getString(KEY_RECENT, null).orEmpty().split(';').filter { it.isNotEmpty() }
+            .map { key -> key.split(',').map { it.toIntOrNull() } }
+
     fun toMap(): Map<String, Any> {
         rollover()
         return mapOf(
@@ -63,6 +77,7 @@ class Store(context: Context) {
     companion object {
         private const val PREFS = "thumbbreak"
         private const val DEBUG_PREFS = "thumbbreak_debug"
+        private const val KEY_RECENT = "recent_shorts"
         private const val KEY_DATE = "date"
         private const val KEY_INSTAGRAM = "count_instagram"
         private const val KEY_YOUTUBE = "count_youtube"

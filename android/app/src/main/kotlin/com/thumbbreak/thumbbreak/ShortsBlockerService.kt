@@ -29,10 +29,10 @@ class ShortsBlockerService : AccessibilityService() {
     @Volatile private var lastCheckAt = 0L
     private var lastBlockAt = 0L
     private var lastCaptureAt = 0L
-    private var lastPageKey: List<String?>? = null
-    private var pendingKey: List<String?>? = null
+    private var lastPageKey: List<Int?>? = null
+    private var pendingKey: List<Int?>? = null
     private var pendingSince = 0L
-    private val recentKeys = ArrayDeque<List<String?>>()
+    private val recentKeys = ArrayDeque<List<Int?>>()
 
     // Main thread: receives events and owns the badge. Every node lookup is a blocking IPC into
     // Instagram/YouTube (slow while video plays), so detection runs on [worker]; events that
@@ -85,6 +85,13 @@ class ShortsBlockerService : AccessibilityService() {
     override fun onServiceConnected() {
         store = Store(this)
         badge = CounterBadge(this)
+        // The service is recreated whenever Android rebinds it; restore recent shorts so the one
+        // on screen isn't counted again.
+        worker.post {
+            recentKeys.clear()
+            recentKeys.addAll(store.recentShorts())
+            lastPageKey = recentKeys.lastOrNull()
+        }
         connected = true
         Log.d(TAG, "service connected")
     }
@@ -163,6 +170,7 @@ class ShortsBlockerService : AccessibilityService() {
             if (recentKeys.none { sameShort(it, page) }) {
                 recentKeys.addLast(page)
                 if (recentKeys.size > RECENT_KEYS) recentKeys.removeFirst()
+                store.saveRecentShorts(recentKeys)
                 store.increment(app)
                 state = "COUNTED"
             } else {
@@ -195,7 +203,7 @@ class ShortsBlockerService : AccessibilityService() {
      * mid-swipe (two pages visible) or when the first part is missing, so nothing is counted
      * until the screen settles. Labels are only compared in memory, never stored.
      */
-    private fun visiblePageKey(root: AccessibilityNodeInfo, app: TargetApp): List<String?>? {
+    private fun visiblePageKey(root: AccessibilityNodeInfo, app: TargetApp): List<Int?>? {
         val page = root.findAccessibilityNodeInfosByViewId("${app.packageName}:id/${app.pageId}")
             .filter { it.isVisibleToUser }
             .singleOrNull() ?: return null
@@ -216,11 +224,12 @@ class ShortsBlockerService : AccessibilityService() {
             listOf(longestInfoLabel(root, page))
         }
         if (labels.first() == null) return null
-        return labels.map { it?.take(KEY_LABEL_CHARS) }
+        // Each part is reduced to a hash: only these numbers are kept (and persisted), never text.
+        return labels.map { it?.take(KEY_LABEL_CHARS)?.hashCode() }
     }
 
     /** Same short if the first parts match and every part present in both matches. */
-    private fun sameShort(a: List<String?>, b: List<String?>): Boolean =
+    private fun sameShort(a: List<Int?>, b: List<Int?>): Boolean =
         a.first() == b.first() &&
             a.indices.all { a[it] == null || b.getOrNull(it) == null || a[it] == b[it] }
 
