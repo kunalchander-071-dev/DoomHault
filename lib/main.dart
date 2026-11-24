@@ -155,8 +155,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 'ThumbBreak needs Accessibility access to count Reels & Shorts '
                 'and block them after your daily limit. It only looks at '
                 'Instagram and YouTube, and only reads on-screen labels (like a '
-                'reel\'s author or title) to tell one reel from the next. '
-                'Nothing is saved, and nothing leaves your phone.',
+                'reel\'s author or title) to tell one reel from the next. The '
+                'text is never saved — only a short fingerprint of your last few '
+                'reels, so one isn\'t counted twice. Nothing leaves your phone.',
                 style: step,
               ),
               const SizedBox(height: 16),

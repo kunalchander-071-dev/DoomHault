@@ -33,6 +33,8 @@ class ShortsBlockerService : AccessibilityService() {
     private var pendingKey: List<Int?>? = null
     private var pendingSince = 0L
     private val recentKeys = ArrayDeque<List<Int?>>()
+    private var unreadableRechecks = 0
+    private var lastLogged: String? = null
 
     // Main thread: receives events and owns the badge. Every node lookup is a blocking IPC into
     // Instagram/YouTube (slow while video plays), so detection runs on [worker]; events that
@@ -76,7 +78,11 @@ class ShortsBlockerService : AccessibilityService() {
         } catch (e: Exception) {
             "error ${e.javaClass.simpleName}"
         }
-        Log.d(TAG, "${app.name} $result took=${SystemClock.uptimeMillis() - start}ms")
+        // Passes run every ~300 ms while a short plays; log only when the outcome changes.
+        if (result != lastLogged) {
+            lastLogged = result
+            Log.d(TAG, "${app.name} $result took=${SystemClock.uptimeMillis() - start}ms")
+        }
     }
 
     // Overlays can only be added while connected; posted badge updates check this first.
@@ -181,9 +187,12 @@ class ShortsBlockerService : AccessibilityService() {
         }
         // A playing short emits few or no events, so don't wait for one: re-check once a pending
         // key has had time to settle, or shortly after the key couldn't be read (mid-swipe).
+        // Unreadable keys are retried only a few times: while e.g. YouTube's comments panel is
+        // open the key stays unreadable, and polling forever would drain the battery.
+        if (page == null) unreadableRechecks++ else unreadableRechecks = 0
         val recheckIn = when {
             pendingKey != null -> pendingSince + SETTLE_MS - now
-            page == null -> SETTLE_MS
+            page == null && unreadableRechecks <= MAX_UNREADABLE_RECHECKS -> SETTLE_MS
             else -> null
         }
         if (recheckIn != null && detectScheduled.compareAndSet(false, true)) {
@@ -201,7 +210,7 @@ class ShortsBlockerService : AccessibilityService() {
      * Identifies the short on screen by its labels (see [TargetApp]): the first part (author or
      * title) is required, later ones (caption) are optional since not every reel has one. Null
      * mid-swipe (two pages visible) or when the first part is missing, so nothing is counted
-     * until the screen settles. Labels are only compared in memory, never stored.
+     * until the screen settles. Labels are reduced to hashes right away; text is never stored.
      */
     private fun visiblePageKey(root: AccessibilityNodeInfo, app: TargetApp): List<Int?>? {
         val page = root.findAccessibilityNodeInfosByViewId("${app.packageName}:id/${app.pageId}")
@@ -350,6 +359,7 @@ class ShortsBlockerService : AccessibilityService() {
         private const val FOREGROUND_CHECK_MS = 1000L
         private const val SETTLE_MS = 600L
         private const val RECENT_KEYS = 5
+        private const val MAX_UNREADABLE_RECHECKS = 3
         private const val MAX_KEY_NODES = 40
         private const val KEY_LABEL_CHARS = 40
         private const val INFO_AREA_LEFT = 0.3f
