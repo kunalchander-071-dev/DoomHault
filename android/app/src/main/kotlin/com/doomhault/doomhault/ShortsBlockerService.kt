@@ -1,4 +1,4 @@
-package com.thumbbreak.thumbbreak
+package com.doomhault.doomhault
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
@@ -40,7 +40,7 @@ class ShortsBlockerService : AccessibilityService() {
     // Instagram/YouTube (slow while video plays), so detection runs on [worker]; events that
     // arrive while it's busy are coalesced into one pass instead of queuing on the main thread.
     private val handler = Handler(Looper.getMainLooper())
-    private val workerThread = HandlerThread("thumbbreak-detect").apply { start() }
+    private val workerThread = HandlerThread("doomhault-detect").apply { start() }
     private val worker = Handler(workerThread.looper)
     private val detectScheduled = AtomicBoolean(false)
     @Volatile private var latestApp: TargetApp? = null
@@ -286,7 +286,7 @@ class ShortsBlockerService : AccessibilityService() {
 
     /**
      * Diagnostics: remember which view IDs were on the latest screen of each app, so the
-     * correct Reels/Shorts IDs can be found from inside ThumbBreak (long-press the title).
+     * correct Reels/Shorts IDs can be found from inside DoomHault (long-press the title).
      * Only IDs are stored — no on-screen text.
      */
     private fun captureViewIdsAsync(root: AccessibilityNodeInfo, app: TargetApp, now: Long) {
@@ -351,7 +351,7 @@ class ShortsBlockerService : AccessibilityService() {
     }
 
     companion object {
-        private const val TAG = "ThumbBreak"
+        private const val TAG = "DoomHault"
         private const val CHECK_THROTTLE_MS = 300L
         private const val BLOCK_COOLDOWN_MS = 1500L
         private const val CAPTURE_INTERVAL_MS = 30_000L

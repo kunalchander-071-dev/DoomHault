@@ -1,4 +1,4 @@
-package com.thumbbreak.thumbbreak
+package com.doomhault.doomhault
 
 /**
  * Apps we watch, and the view IDs that only exist while their short-form player is on screen.

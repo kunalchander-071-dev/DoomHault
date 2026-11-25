@@ -3,15 +3,15 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-void main() => runApp(const ThumbBreakApp());
+void main() => runApp(const DoomHaultApp());
 
-class ThumbBreakApp extends StatelessWidget {
-  const ThumbBreakApp({super.key});
+class DoomHaultApp extends StatelessWidget {
+  const DoomHaultApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'ThumbBreak',
+      title: 'DoomHault',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,
@@ -59,8 +59,8 @@ class BreakState {
 }
 
 class NativeBridge {
-  static const _control = MethodChannel('thumbbreak/control');
-  static const _events = EventChannel('thumbbreak/state');
+  static const _control = MethodChannel('doomhault/control');
+  static const _events = EventChannel('doomhault/state');
 
   static Future<BreakState> getState() async {
     final m = await _control.invokeMapMethod<String, dynamic>('getState');
@@ -145,14 +145,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _promptContext = context;
         return AlertDialog(
         backgroundColor: const Color(0xFF111111),
-        title: const Text('Turn on ThumbBreak'),
+        title: const Text('Turn on DoomHault'),
         content: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
               const Text(
-                'ThumbBreak needs Accessibility access to count Reels & Shorts '
+                'DoomHault needs Accessibility access to count Reels & Shorts '
                 'and block them after your daily limit. It only looks at '
                 'Instagram and YouTube, and only reads on-screen labels (like a '
                 'reel\'s author or title) to tell one reel from the next. The '
@@ -163,7 +163,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               const SizedBox(height: 16),
               const Text(
                 '1. Open Accessibility → Installed / Downloaded apps → '
-                'ThumbBreak → turn it on.',
+                'DoomHault → turn it on.',
                 style: step,
               ),
               if (restricted) ...[
@@ -286,7 +286,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             children: [
               GestureDetector(
                 onLongPress: () => _showViewIds(context),
-                child: Text('ThumbBreak',
+                child: Text('DoomHault',
                     style: TextStyle(color: muted, letterSpacing: 1.5)),
               ),
               if (!s.serviceEnabled) ...[
@@ -370,7 +370,7 @@ class _EnableBanner extends StatelessWidget {
           borderRadius: BorderRadius.circular(12),
         ),
         child: const Text(
-          'Tap to enable ThumbBreak in Accessibility settings. '
+          'Tap to enable DoomHault in Accessibility settings. '
           'It\'s needed to count and block Reels & Shorts.',
           style: TextStyle(fontSize: 13, height: 1.4),
         ),

@@ -30,10 +30,10 @@ jobs:
       # Generates Gradle/boilerplate files that aren't committed yet; existing files are kept.
       - name: Scaffold missing platform files
         run: |
-          flutter create --org com.thumbbreak --project-name thumbbreak --platforms android .
+          flutter create --org com.doomhault --project-name doomhault --platforms android .
           rm -rf test
-          sed -i 's/applicationId = "com.thumbbreak.thumbbreak"/applicationId = "com.thumbbreak.app"/' android/app/build.gradle.kts
-          grep -q 'applicationId = "com.thumbbreak.app"' android/app/build.gradle.kts
+          sed -i 's/applicationId = "com.doomhault.doomhault"/applicationId = "com.doomhault.app"/' android/app/build.gradle.kts
+          grep -q 'applicationId = "com.doomhault.app"' android/app/build.gradle.kts
 
       # Stable signing key so updates install over the previous build.
       # Without the secret, each build gets a throwaway key (uninstall before updating).

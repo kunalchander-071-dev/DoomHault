@@ -1,1 +1,1 @@
-ThumbBreak -- Take break from doomscrolling.
+DoomHault -- Take break from doomscrolling.

@@ -1,4 +1,4 @@
-package com.thumbbreak.thumbbreak
+package com.doomhault.doomhault
 
 import android.content.ContentProvider
 import android.content.ContentValues
@@ -12,7 +12,7 @@ import android.os.Bundle
  * Gives the UI process access to [Store], which lives in the `:service` process alongside
  * [ShortsBlockerService] (see AndroidManifest). SharedPreferences are cached per process and
  * never re-read, so both processes using them directly would see stale counts and limits.
- * Not exported: only ThumbBreak itself can use it.
+ * Not exported: only DoomHault itself can use it.
  *
  * - query: one row with instagram, youtube, limit (today's counts; rolls over at midnight)
  * - update: ContentValues with "limit"

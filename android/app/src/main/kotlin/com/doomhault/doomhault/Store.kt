@@ -1,4 +1,4 @@
-package com.thumbbreak.thumbbreak
+package com.doomhault.doomhault
 
 import android.content.Context
 import android.content.SharedPreferences
@@ -89,8 +89,8 @@ class Store(context: Context) {
     }
 
     companion object {
-        private const val PREFS = "thumbbreak"
-        private const val DEBUG_PREFS = "thumbbreak_debug"
+        private const val PREFS = "doomhault"
+        private const val DEBUG_PREFS = "doomhault_debug"
         private const val KEY_RECENT = "recent_shorts"
         private const val KEY_DATE = "date"
         private const val KEY_INSTAGRAM = "count_instagram"

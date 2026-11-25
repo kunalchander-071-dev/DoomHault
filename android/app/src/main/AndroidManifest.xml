@@ -1,6 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
-        android:label="ThumbBreak"
+        android:label="DoomHault"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
@@ -22,10 +22,10 @@
         </activity>
 
         <!-- The service runs in its own lightweight process, so the Flutter UI (engine, graphics)
-             is only loaded while ThumbBreak's screen is open and can be freed afterwards. -->
+             is only loaded while DoomHault's screen is open and can be freed afterwards. -->
         <service
             android:name=".ShortsBlockerService"
-            android:label="ThumbBreak"
+            android:label="DoomHault"
             android:exported="true"
             android:process=":service"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">

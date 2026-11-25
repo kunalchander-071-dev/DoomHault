@@ -1,4 +1,4 @@
-package com.thumbbreak.thumbbreak
+package com.doomhault.doomhault
 
 import android.content.ComponentName
 import android.content.ContentValues
@@ -27,7 +27,7 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         val messenger = flutterEngine.dartExecutor.binaryMessenger
 
-        MethodChannel(messenger, "thumbbreak/control").setMethodCallHandler { call, result ->
+        MethodChannel(messenger, "doomhault/control").setMethodCallHandler { call, result ->
             when (call.method) {
                 "getState" -> result.success(
                     readState() + mapOf(
@@ -73,7 +73,7 @@ class MainActivity : FlutterActivity() {
         }
 
         // Live counter: push a fresh snapshot whenever the service changes a count or the limit.
-        EventChannel(messenger, "thumbbreak/state").setStreamHandler(
+        EventChannel(messenger, "doomhault/state").setStreamHandler(
             object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
                     val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {

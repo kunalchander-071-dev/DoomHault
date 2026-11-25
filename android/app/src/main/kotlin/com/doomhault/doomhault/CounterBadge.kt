@@ -1,4 +1,4 @@
-package com.thumbbreak.thumbbreak
+package com.doomhault.doomhault
 
 import android.accessibilityservice.AccessibilityService
 import android.graphics.Color
