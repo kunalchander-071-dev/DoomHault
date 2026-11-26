@@ -25,7 +25,11 @@ class CounterBadge(private val service: AccessibilityService) {
         val badge = view ?: create()?.also { view = it } ?: return
         badge.text = "$count / $limit"
         (badge.background as GradientDrawable).setColor(
-            if (limit - count <= WARN_REMAINING) WARN_COLOR else NORMAL_COLOR
+            when {
+                count >= limit -> LIMIT_COLOR
+                limit - count <= WARN_REMAINING || count >= limit * NEAR_FRACTION -> NEAR_COLOR
+                else -> CALM_COLOR
+            }
         )
     }
 
@@ -73,8 +77,12 @@ class CounterBadge(private val service: AccessibilityService) {
     ).toInt()
 
     companion object {
+        // Brand palette (see lib/main.dart): calm sage, saffron near the limit, red at it.
+        // White text stays above 4.5:1 contrast on all three.
         private const val WARN_REMAINING = 2
-        private val NORMAL_COLOR = Color.argb(150, 0, 0, 0)
-        private val WARN_COLOR = Color.argb(220, 229, 57, 53)
+        private const val NEAR_FRACTION = 0.75
+        private val CALM_COLOR = Color.argb(230, 0x4E, 0x6A, 0x46)
+        private val NEAR_COLOR = Color.argb(235, 0xA3, 0x56, 0x1B)
+        private val LIMIT_COLOR = Color.argb(240, 0xB2, 0x3A, 0x30)
     }
 }

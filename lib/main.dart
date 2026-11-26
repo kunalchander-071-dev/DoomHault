@@ -13,15 +13,99 @@ class DoomHaultApp extends StatelessWidget {
     return MaterialApp(
       title: 'DoomHault',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: Colors.black,
-        colorScheme: const ColorScheme.dark(primary: Colors.white),
-        useMaterial3: true,
-      ),
+      theme: _theme(DoomColors.light),
+      darkTheme: _theme(DoomColors.dark),
       home: const HomeScreen(),
     );
   }
+
+  static ThemeData _theme(DoomColors c) {
+    final dark = c == DoomColors.dark;
+    return ThemeData(
+      useMaterial3: true,
+      brightness: dark ? Brightness.dark : Brightness.light,
+      scaffoldBackgroundColor: c.background,
+      colorScheme: (dark ? const ColorScheme.dark() : const ColorScheme.light()).copyWith(
+        primary: c.calm,
+        onPrimary: dark ? c.background : Colors.white,
+        secondary: c.near,
+        error: c.limit,
+        surface: c.surface,
+        onSurface: c.text,
+      ),
+      dialogTheme: DialogThemeData(backgroundColor: c.surface),
+      bottomSheetTheme: BottomSheetThemeData(backgroundColor: c.surface),
+      extensions: [c],
+    );
+  }
+}
+
+/// Brand palette ("Sage & Saffron"), taken from the DoomHault logo. Text colors meet
+/// WCAG AA (4.5:1) on [background]; the badge in CounterBadge.kt uses the same calm/near/limit.
+@immutable
+class DoomColors extends ThemeExtension<DoomColors> {
+  final Color background; // logo cream / deep green-black
+  final Color surface;
+  final Color text; // logo wordmark green
+  final Color muted;
+  final Color calm; // sage: under the limit, buttons
+  final Color near; // saffron: close to the limit
+  final Color limit; // red: limit reached
+  final Color track;
+  final Color border;
+
+  const DoomColors({
+    required this.background,
+    required this.surface,
+    required this.text,
+    required this.muted,
+    required this.calm,
+    required this.near,
+    required this.limit,
+    required this.track,
+    required this.border,
+  });
+
+  static const light = DoomColors(
+    background: Color(0xFFF4EFE4),
+    surface: Color(0xFFFBF8F2),
+    text: Color(0xFF2E3B2A),
+    muted: Color(0xFF6B6457),
+    calm: Color(0xFF4E6A46),
+    near: Color(0xFFA3561B),
+    limit: Color(0xFFB23A30),
+    track: Color(0xFFDCE3D3),
+    border: Color(0xFFCFC8B8),
+  );
+
+  static const dark = DoomColors(
+    background: Color(0xFF161B15),
+    surface: Color(0xFF20271F),
+    text: Color(0xFFECE6D8),
+    muted: Color(0xFFA39C8C),
+    calm: Color(0xFF9DB58F),
+    near: Color(0xFFE39A52),
+    limit: Color(0xFFE5786C),
+    track: Color(0xFF2E382C),
+    border: Color(0xFF3A4537),
+  );
+
+  static DoomColors of(BuildContext context) =>
+      Theme.of(context).extension<DoomColors>() ?? light;
+
+  /// Calm → near (last 25% or last 2) → limit, same thresholds as the badge.
+  Color forProgress(int total, int limit) {
+    if (total >= limit) return this.limit;
+    if (limit - total <= 2 || total >= limit * 0.75) return near;
+    return calm;
+  }
+
+  @override
+  DoomColors copyWith() => this;
+
+  @override
+  DoomColors lerp(ThemeExtension<DoomColors>? other, double t) =>
+      t < 0.5 || other is! DoomColors ? this : other;
 }
 
 /// Snapshot of what the native accessibility service has recorded today.
@@ -144,7 +228,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       builder: (context) {
         _promptContext = context;
         return AlertDialog(
-        backgroundColor: const Color(0xFF111111),
         title: const Text('Turn on DoomHault'),
         content: SingleChildScrollView(
           child: Column(
@@ -177,7 +260,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 const SizedBox(height: 4),
                 Text(
                   'The ⋮ option only appears after you\'ve tried step 1 once.',
-                  style: step.copyWith(fontSize: 12, color: Colors.white54),
+                  style: step.copyWith(
+                      fontSize: 12, color: DoomColors.of(context).muted),
                 ),
               ],
             ],
@@ -234,7 +318,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF111111),
       builder: (context) => SafeArea(
         child: SizedBox(
           height: MediaQuery.of(context).size.height * 0.75,
@@ -275,9 +358,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final s = _state;
     final progress = (s.total / s.limit).clamp(0.0, 1.0);
-    final muted = Colors.white54;
+    final c = DoomColors.of(context);
+    final muted = c.muted;
+    final stateColor = c.forProgress(s.total, s.limit);
+    final darkMode = Theme.of(context).brightness == Brightness.dark;
 
-    return Scaffold(
+    // No app bar, so set the status/navigation bar icon colors for the cream/dark background.
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: darkMode ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
+      child: Scaffold(
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
@@ -286,8 +375,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             children: [
               GestureDetector(
                 onLongPress: () => _showViewIds(context),
-                child: Text('DoomHault',
-                    style: TextStyle(color: muted, letterSpacing: 1.5)),
+                child: Row(
+                  children: [
+                    ClipOval(
+                      child: Image.asset('assets/avatar.png',
+                          width: 36, height: 36),
+                    ),
+                    const SizedBox(width: 12),
+                    Text('DoomHault',
+                        style: TextStyle(
+                            color: c.text,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.5)),
+                  ],
+                ),
               ),
               if (!s.serviceEnabled) ...[
                 const SizedBox(height: 24),
@@ -305,7 +407,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   fontSize: 120,
                   fontWeight: FontWeight.w200,
                   height: 1,
-                  color: s.limitReached ? Colors.redAccent : Colors.white,
+                  color: s.limitReached ? c.limit : c.text,
                 ),
               ),
               const SizedBox(height: 8),
@@ -317,12 +419,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
               const SizedBox(height: 24),
               ClipRRect(
-                borderRadius: BorderRadius.circular(2),
+                borderRadius: BorderRadius.circular(3),
                 child: LinearProgressIndicator(
                   value: progress,
-                  minHeight: 3,
-                  backgroundColor: Colors.white12,
-                  color: s.limitReached ? Colors.redAccent : Colors.white,
+                  minHeight: 6,
+                  backgroundColor: c.track,
+                  color: stateColor,
                 ),
               ),
               const SizedBox(height: 16),
@@ -347,6 +449,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ),
         ),
       ),
+      ),
     );
   }
 }
@@ -366,7 +469,8 @@ class _EnableBanner extends StatelessWidget {
         width: double.infinity,
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          border: Border.all(color: Colors.white24),
+          color: DoomColors.of(context).surface,
+          border: Border.all(color: DoomColors.of(context).border),
           borderRadius: BorderRadius.circular(12),
         ),
         child: const Text(
@@ -390,7 +494,7 @@ class _StepButton extends StatelessWidget {
       onPressed: onTap,
       icon: Icon(icon, size: 20),
       style: IconButton.styleFrom(
-        side: const BorderSide(color: Colors.white24),
+        side: BorderSide(color: DoomColors.of(context).border),
       ),
     );
   }

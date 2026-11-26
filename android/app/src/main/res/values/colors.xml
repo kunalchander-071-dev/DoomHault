@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand colors, from the DoomHault logo. -->
+    <color name="ic_launcher_background">#9CAF88</color>
+    <color name="splash_background">#F4EFE4</color>
+</resources>
