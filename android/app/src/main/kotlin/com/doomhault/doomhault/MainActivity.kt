@@ -104,7 +104,10 @@ class MainActivity : FlutterActivity() {
 
     /** Today's counts and the limit from [StateProvider]; zeros if it can't be reached. */
     private fun readState(): Map<String, Any> {
-        val columns = listOf(StateProvider.COL_INSTAGRAM, StateProvider.COL_YOUTUBE, StateProvider.COL_LIMIT)
+        val columns = listOf(
+            StateProvider.COL_INSTAGRAM, StateProvider.COL_YOUTUBE,
+            StateProvider.COL_LIMIT, StateProvider.COL_EXTRA,
+        )
         contentResolver.query(StateProvider.uri(this), null, null, null, null)?.use { c ->
             if (c.moveToFirst()) return columns.associateWith { c.getInt(c.getColumnIndexOrThrow(it)) }
         }

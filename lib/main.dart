@@ -113,6 +113,7 @@ class BreakState {
   final int instagram;
   final int youtube;
   final int limit;
+  final int extra; // extra reels granted today via "Breathe & watch 3 more"
   final bool serviceEnabled;
   final int sdkInt;
 
@@ -120,6 +121,7 @@ class BreakState {
     this.instagram = 0,
     this.youtube = 0,
     this.limit = 20,
+    this.extra = 0,
     this.serviceEnabled = false,
     this.sdkInt = 0,
   });
@@ -128,7 +130,8 @@ class BreakState {
   bool get hasRestrictedSettings => sdkInt >= 33;
 
   int get total => instagram + youtube;
-  bool get limitReached => total >= limit;
+  int get effectiveLimit => limit + extra;
+  bool get limitReached => total >= effectiveLimit;
 
   factory BreakState.fromMap(Map<dynamic, dynamic> m,
       {bool? serviceEnabled, int? sdkInt}) {
@@ -136,6 +139,7 @@ class BreakState {
       instagram: m['instagram'] as int? ?? 0,
       youtube: m['youtube'] as int? ?? 0,
       limit: m['limit'] as int? ?? 20,
+      extra: m['extra'] as int? ?? 0,
       serviceEnabled: serviceEnabled ?? m['serviceEnabled'] as bool? ?? false,
       sdkInt: sdkInt ?? m['sdkInt'] as int? ?? 0,
     );
@@ -384,7 +388,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 _EnableBanner(onTap: _openPermissionPrompt),
               ],
               const SizedBox(height: 32),
-              Center(child: _MoodRing(total: s.total, limit: s.limit)),
+              Center(child: _MoodRing(total: s.total, limit: s.effectiveLimit)),
               const SizedBox(height: 20),
               Center(
                 child: Text.rich(
@@ -395,14 +399,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           fontSize: 44, fontWeight: FontWeight.w700, color: c.text),
                     ),
                     TextSpan(
-                      text: ' / ${s.limit}',
+                      text: ' / ${s.effectiveLimit}',
                       style: TextStyle(fontSize: 22, color: c.muted),
                     ),
                   ]),
                 ),
               ),
               Center(
-                child: Text('reels & shorts today',
+                child: Text(
+                    s.extra > 0
+                        ? 'reels & shorts today · +${s.extra} extra'
+                        : 'reels & shorts today',
                     style: TextStyle(color: c.muted, fontSize: 14)),
               ),
               const SizedBox(height: 14),
@@ -446,7 +453,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (s.limitReached) {
       return "That's all for today.\nReels & Shorts are paused until midnight.";
     }
-    return switch (Mood.of(s.total, s.limit)) {
+    return switch (Mood.of(s.total, s.effectiveLimit)) {
       Mood.happy when s.total == 0 => 'A fresh start — no reels yet today.',
       Mood.happy => "You're in control. Enjoy mindfully.",
       Mood.neutral => 'Over halfway. Maybe take a breather?',

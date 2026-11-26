@@ -10,7 +10,6 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import android.widget.Toast
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -24,10 +23,12 @@ class ShortsBlockerService : AccessibilityService() {
 
     private lateinit var store: Store
     private lateinit var badge: CounterBadge
+    private lateinit var halt: HaltScreen
 
     private var inViewer = false
     @Volatile private var lastCheckAt = 0L
-    private var lastBlockAt = 0L
+    // Worker thread: the Halt screen is up (or being shown) for the current visit to the player.
+    private var halting = false
     private var lastCaptureAt = 0L
     private var lastPageKey: List<Int?>? = null
     private var pendingKey: List<Int?>? = null
@@ -91,6 +92,26 @@ class ShortsBlockerService : AccessibilityService() {
     override fun onServiceConnected() {
         store = Store(this)
         badge = CounterBadge(this, store)
+        halt = HaltScreen(
+            this,
+            store,
+            onExtended = {
+                // Extra reels granted: resume counting on the reel that's on screen.
+                worker.post {
+                    halting = false
+                    if (detectScheduled.compareAndSet(false, true)) worker.post(detectPass)
+                }
+            },
+            onLeft = {
+                // If Back didn't actually leave Reels/Shorts, the next pass halts again.
+                worker.post {
+                    halting = false
+                    if (detectScheduled.compareAndSet(false, true)) {
+                        worker.postDelayed(detectPass, LEAVE_RECHECK_MS)
+                    }
+                }
+            },
+        )
         // The service is recreated whenever Android rebinds it; restore recent shorts so the one
         // on screen isn't counted again.
         worker.post {
@@ -105,7 +126,10 @@ class ShortsBlockerService : AccessibilityService() {
     override fun onUnbind(intent: Intent?): Boolean {
         connected = false
         Log.d(TAG, "service unbound")
-        handler.post { if (::badge.isInitialized) badge.hide() }
+        handler.post {
+            if (::badge.isInitialized) badge.hide()
+            if (::halt.isInitialized) halt.hide()
+        }
         return super.onUnbind(intent)
     }
 
@@ -148,9 +172,26 @@ class ShortsBlockerService : AccessibilityService() {
         inViewer = true
         if (justEntered) worker.postDelayed(foregroundCheck, FOREGROUND_CHECK_MS)
 
+        // Daily limit used: the reel that reached it can be watched to the end; moving on to
+        // another one (or coming back to the player later) shows the Halt screen.
         if (store.isLimitReached()) {
-            block(now)
-            return "viewer=yes limit"
+            val page = visiblePageKey(root, app)
+            val last = lastPageKey
+            if (!halting && page != null && last != null && sameShort(page, last)) {
+                val total = store.total()
+                val limit = store.effectiveLimit()
+                handler.post { if (connected) badge.show(total, limit) }
+                return "viewer=yes limit, finishing last reel"
+            }
+            if (!halting && page == null && unreadableRechecks++ < MAX_UNREADABLE_RECHECKS) {
+                // Mid-swipe or not readable yet: look again before deciding.
+                if (detectScheduled.compareAndSet(false, true)) {
+                    worker.postDelayed(detectPass, SETTLE_MS)
+                }
+                return "viewer=yes limit, key=none"
+            }
+            showHalt()
+            return "viewer=yes HALT"
         }
 
         // Count when a different short has settled on screen. Transient keys (sheets opening or
@@ -199,9 +240,8 @@ class ShortsBlockerService : AccessibilityService() {
             worker.postDelayed(detectPass, recheckIn.coerceAtLeast(0))
         }
         val total = store.total()
-        val limit = store.limit
+        val limit = store.effectiveLimit()
         handler.post { if (connected) badge.show(total, limit) }
-        if (store.isLimitReached()) block(now)
         // Keys are logged as a hash only — never caption or title text.
         return "viewer=yes $state key=#${page?.hashCode()?.toString(16)} total=$total"
     }
@@ -323,19 +363,24 @@ class ShortsBlockerService : AccessibilityService() {
     /** Worker thread only. */
     private fun leaveViewer() {
         inViewer = false
+        halting = false
+        unreadableRechecks = 0
         worker.removeCallbacks(foregroundCheck)
-        handler.post { badge.hide() }
+        handler.post {
+            badge.hide()
+            halt.hide()
+        }
     }
 
-    /** Worker thread only. */
-    private fun block(now: Long) {
-        // One Back per block window, so we don't back out of the whole app.
-        if (now - lastBlockAt < BLOCK_COOLDOWN_MS) return
-        lastBlockAt = now
-        leaveViewer()
-        performGlobalAction(GLOBAL_ACTION_BACK)
+    /** Worker thread only. Covers the player with the Halt screen (see [HaltScreen]). */
+    private fun showHalt() {
+        if (halting) return
+        halting = true
+        Log.d(TAG, "halt")
         handler.post {
-            Toast.makeText(this, "That's all for today — Reels & Shorts are paused until midnight", Toast.LENGTH_LONG).show()
+            if (!connected) return@post
+            badge.hide()
+            halt.show()
         }
     }
 
@@ -347,17 +392,18 @@ class ShortsBlockerService : AccessibilityService() {
         captureExecutor.shutdownNow()
         connected = false
         if (::badge.isInitialized) badge.hide()
+        if (::halt.isInitialized) halt.hide()
         super.onDestroy()
     }
 
     companion object {
         private const val TAG = "DoomHault"
         private const val CHECK_THROTTLE_MS = 300L
-        private const val BLOCK_COOLDOWN_MS = 1500L
         private const val CAPTURE_INTERVAL_MS = 30_000L
         private const val MAX_CAPTURE_NODES = 600
         private const val FOREGROUND_CHECK_MS = 1000L
         private const val SETTLE_MS = 600L
+        private const val LEAVE_RECHECK_MS = 1_000L
         private const val RECENT_KEYS = 5
         private const val MAX_UNREADABLE_RECHECKS = 3
         private const val MAX_KEY_NODES = 40

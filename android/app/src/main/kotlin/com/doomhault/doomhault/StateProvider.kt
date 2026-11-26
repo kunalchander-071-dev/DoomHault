@@ -14,7 +14,8 @@ import android.os.Bundle
  * never re-read, so both processes using them directly would see stale counts and limits.
  * Not exported: only DoomHault itself can use it.
  *
- * - query: one row with instagram, youtube, limit (today's counts; rolls over at midnight)
+ * - query: one row with instagram, youtube, limit, extra (today's counts and extra reels;
+ *   rolls over at midnight)
  * - update: ContentValues with "limit"
  * - call(METHOD_VIEW_IDS): diagnostics, view IDs per app as a Bundle
  * Observers on [uri] are notified whenever a count or the limit changes.
@@ -65,7 +66,8 @@ class StateProvider : ContentProvider() {
         const val COL_INSTAGRAM = "instagram"
         const val COL_YOUTUBE = "youtube"
         const val COL_LIMIT = "limit"
-        private val COLUMNS = arrayOf(COL_INSTAGRAM, COL_YOUTUBE, COL_LIMIT)
+        const val COL_EXTRA = "extra"
+        private val COLUMNS = arrayOf(COL_INSTAGRAM, COL_YOUTUBE, COL_LIMIT, COL_EXTRA)
         const val METHOD_VIEW_IDS = "viewIds"
 
         fun uri(context: Context): Uri = Uri.parse("content://${context.packageName}.state")

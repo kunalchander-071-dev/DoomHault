@@ -29,6 +29,7 @@ class Store(context: Context) {
                 .putString(KEY_DATE, today)
                 .putInt(KEY_INSTAGRAM, 0)
                 .putInt(KEY_YOUTUBE, 0)
+                .putInt(KEY_EXTRA, 0)
                 .apply()
             notifyChanged()
         }
@@ -46,7 +47,25 @@ class Store(context: Context) {
         return prefs.getInt(KEY_INSTAGRAM, 0) + prefs.getInt(KEY_YOUTUBE, 0)
     }
 
-    fun isLimitReached(): Boolean = total() >= limit
+    /** Extra reels granted today via "Breathe & watch 3 more" (resets at midnight). */
+    fun extra(): Int {
+        rollover()
+        return prefs.getInt(KEY_EXTRA, 0)
+    }
+
+    /** Today's limit including any extra reels. */
+    fun effectiveLimit(): Int = limit + extra()
+
+    fun isLimitReached(): Boolean = total() >= effectiveLimit()
+
+    /** The extension is offered once a day. */
+    fun canExtend(): Boolean = extra() == 0
+
+    fun grantExtra() {
+        rollover()
+        prefs.edit().putInt(KEY_EXTRA, prefs.getInt(KEY_EXTRA, 0) + EXTRA_REELS).apply()
+        notifyChanged()
+    }
 
     fun increment(app: TargetApp) {
         rollover()
@@ -93,6 +112,7 @@ class Store(context: Context) {
             "instagram" to prefs.getInt(KEY_INSTAGRAM, 0),
             "youtube" to prefs.getInt(KEY_YOUTUBE, 0),
             "limit" to limit,
+            "extra" to prefs.getInt(KEY_EXTRA, 0),
         )
     }
 
@@ -106,6 +126,8 @@ class Store(context: Context) {
         private const val KEY_INSTAGRAM = "count_instagram"
         private const val KEY_YOUTUBE = "count_youtube"
         private const val KEY_LIMIT = "limit"
+        private const val KEY_EXTRA = "extra_today"
+        const val EXTRA_REELS = 3
         private const val DEFAULT_LIMIT = 20
     }
 }
