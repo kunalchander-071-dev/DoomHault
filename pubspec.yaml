@@ -17,3 +17,6 @@ flutter:
   uses-material-design: true
   assets:
     - assets/avatar.png
+    - assets/mood_happy.png
+    - assets/mood_neutral.png
+    - assets/mood_sleepy.png

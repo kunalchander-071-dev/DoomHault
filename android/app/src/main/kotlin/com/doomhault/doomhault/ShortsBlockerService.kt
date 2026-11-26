@@ -90,7 +90,7 @@ class ShortsBlockerService : AccessibilityService() {
 
     override fun onServiceConnected() {
         store = Store(this)
-        badge = CounterBadge(this)
+        badge = CounterBadge(this, store)
         // The service is recreated whenever Android rebinds it; restore recent shorts so the one
         // on screen isn't counted again.
         worker.post {
@@ -335,7 +335,7 @@ class ShortsBlockerService : AccessibilityService() {
         leaveViewer()
         performGlobalAction(GLOBAL_ACTION_BACK)
         handler.post {
-            Toast.makeText(this, "Daily limit reached — take a break", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "That's all for today — Reels & Shorts are paused until midnight", Toast.LENGTH_LONG).show()
         }
     }
 

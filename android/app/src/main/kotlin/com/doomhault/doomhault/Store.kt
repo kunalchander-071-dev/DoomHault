@@ -75,6 +75,14 @@ class Store(context: Context) {
             key.joinToString(",") { it?.toString() ?: "-" }
         }).apply()
 
+    /** Where the user dragged the counter badge: (on the left side, top offset px); null y = default. */
+    fun badgePosition(): Pair<Boolean, Int?> =
+        debugPrefs.getBoolean(KEY_BADGE_LEFT, false) to
+            debugPrefs.getInt(KEY_BADGE_Y, -1).takeIf { it >= 0 }
+
+    fun saveBadgePosition(onLeft: Boolean, y: Int) =
+        debugPrefs.edit().putBoolean(KEY_BADGE_LEFT, onLeft).putInt(KEY_BADGE_Y, y).apply()
+
     fun recentShorts(): List<List<Int?>> =
         debugPrefs.getString(KEY_RECENT, null).orEmpty().split(';').filter { it.isNotEmpty() }
             .map { key -> key.split(',').map { it.toIntOrNull() } }
@@ -92,6 +100,8 @@ class Store(context: Context) {
         private const val PREFS = "doomhault"
         private const val DEBUG_PREFS = "doomhault_debug"
         private const val KEY_RECENT = "recent_shorts"
+        private const val KEY_BADGE_LEFT = "badge_left"
+        private const val KEY_BADGE_Y = "badge_y"
         private const val KEY_DATE = "date"
         private const val KEY_INSTAGRAM = "count_instagram"
         private const val KEY_YOUTUBE = "count_youtube"

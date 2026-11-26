@@ -93,12 +93,12 @@ class DoomColors extends ThemeExtension<DoomColors> {
   static DoomColors of(BuildContext context) =>
       Theme.of(context).extension<DoomColors>() ?? light;
 
-  /// Calm → near (last 25% or last 2) → limit, same thresholds as the badge.
-  Color forProgress(int total, int limit) {
-    if (total >= limit) return this.limit;
-    if (limit - total <= 2 || total >= limit * 0.75) return near;
-    return calm;
-  }
+  /// Same thresholds as [Mood] and the overlay badge: calm < 50%, near < 80%, then limit.
+  Color forProgress(int total, int limit) => switch (Mood.of(total, limit)) {
+        Mood.happy => calm,
+        Mood.neutral => near,
+        Mood.sleepy => this.limit,
+      };
 
   @override
   DoomColors copyWith() => this;
@@ -302,11 +302,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _changeLimit(int delta) async {
-    final next = (_state.limit + delta).clamp(1, 500);
-    await NativeBridge.setLimit(next);
-    _refresh();
-  }
 
   // Hidden diagnostics: view IDs seen on the last Instagram/YouTube screen.
   Future<void> _showViewIds(BuildContext context) async {
@@ -354,107 +349,323 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _setLimit(int limit) async {
+    await NativeBridge.setLimit(limit.clamp(1, 500));
+    _refresh();
+  }
+
+  void _openPermissionPrompt() {
+    _promptDismissed = false;
+    if (!_promptVisible) _showPermissionPrompt(_state.hasRestrictedSettings);
+  }
+
   @override
   Widget build(BuildContext context) {
     final s = _state;
-    final progress = (s.total / s.limit).clamp(0.0, 1.0);
     final c = DoomColors.of(context);
-    final muted = c.muted;
-    final stateColor = c.forProgress(s.total, s.limit);
+    final message = _moodMessage(s);
     final darkMode = Theme.of(context).brightness == Brightness.dark;
 
     // No app bar, so set the status/navigation bar icon colors for the cream/dark background.
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: darkMode ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
       child: Scaffold(
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+        body: SafeArea(
+          // Scrollable so nothing overflows in landscape or with large font sizes.
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
             children: [
-              GestureDetector(
+              _Header(
+                active: s.serviceEnabled,
                 onLongPress: () => _showViewIds(context),
-                child: Row(
-                  children: [
-                    ClipOval(
-                      child: Image.asset('assets/avatar.png',
-                          width: 36, height: 36),
-                    ),
-                    const SizedBox(width: 12),
-                    Text('DoomHault',
-                        style: TextStyle(
-                            color: c.text,
-                            fontSize: 18,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.5)),
-                  ],
-                ),
               ),
               if (!s.serviceEnabled) ...[
-                const SizedBox(height: 24),
-                _EnableBanner(onTap: () {
-                  _promptDismissed = false;
-                  if (!_promptVisible) {
-                    _showPermissionPrompt(s.hasRestrictedSettings);
-                  }
-                }),
+                const SizedBox(height: 16),
+                _EnableBanner(onTap: _openPermissionPrompt),
               ],
-              const Spacer(),
-              Text(
-                '${s.total}',
-                style: TextStyle(
-                  fontSize: 120,
-                  fontWeight: FontWeight.w200,
-                  height: 1,
-                  color: s.limitReached ? c.limit : c.text,
+              const SizedBox(height: 32),
+              Center(child: _MoodRing(total: s.total, limit: s.limit)),
+              const SizedBox(height: 20),
+              Center(
+                child: Text.rich(
+                  TextSpan(children: [
+                    TextSpan(
+                      text: '${s.total}',
+                      style: TextStyle(
+                          fontSize: 44, fontWeight: FontWeight.w700, color: c.text),
+                    ),
+                    TextSpan(
+                      text: ' / ${s.limit}',
+                      style: TextStyle(fontSize: 22, color: c.muted),
+                    ),
+                  ]),
                 ),
               ),
-              const SizedBox(height: 8),
-              Text(
-                s.limitReached
-                    ? 'Limit reached. Reels & Shorts are blocked.'
-                    : 'of ${s.limit} reels & shorts today',
-                style: TextStyle(color: muted, fontSize: 16),
+              Center(
+                child: Text('reels & shorts today',
+                    style: TextStyle(color: c.muted, fontSize: 14)),
               ),
-              const SizedBox(height: 24),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(3),
-                child: LinearProgressIndicator(
-                  value: progress,
-                  minHeight: 6,
-                  backgroundColor: c.track,
-                  color: stateColor,
+              const SizedBox(height: 14),
+              Center(
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 250),
+                  child: Text(
+                    message,
+                    key: ValueKey(message),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: c.text, fontSize: 15, height: 1.4),
+                  ),
                 ),
               ),
-              const SizedBox(height: 16),
-              Text('Instagram ${s.instagram}   ·   YouTube ${s.youtube}',
-                  style: TextStyle(color: muted, fontSize: 13)),
-              const Spacer(),
+              const SizedBox(height: 28),
               Row(
                 children: [
-                  Text('Daily limit', style: TextStyle(color: muted)),
-                  const Spacer(),
-                  _StepButton(icon: Icons.remove, onTap: () => _changeLimit(-5)),
-                  SizedBox(
-                    width: 56,
-                    child: Text('${s.limit}',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(fontSize: 20)),
-                  ),
-                  _StepButton(icon: Icons.add, onTap: () => _changeLimit(5)),
+                  Expanded(child: _AppTile(name: 'Instagram', count: s.instagram)),
+                  const SizedBox(width: 12),
+                  Expanded(child: _AppTile(name: 'YouTube', count: s.youtube)),
                 ],
+              ),
+              const SizedBox(height: 12),
+              _LimitCard(limit: s.limit, onChanged: _setLimit),
+              const SizedBox(height: 20),
+              Center(
+                child: Text(
+                  'Resets at midnight · Only Reels & Shorts are counted',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: c.muted, fontSize: 12),
+                ),
               ),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  static String _moodMessage(BreakState s) {
+    if (s.limitReached) {
+      return "That's all for today.\nReels & Shorts are paused until midnight.";
+    }
+    return switch (Mood.of(s.total, s.limit)) {
+      Mood.happy when s.total == 0 => 'A fresh start — no reels yet today.',
+      Mood.happy => "You're in control. Enjoy mindfully.",
+      Mood.neutral => 'Over halfway. Maybe take a breather?',
+      Mood.sleepy => 'Almost done for today. Time to wind down.',
+    };
+  }
+}
+
+/// The sage's mood for a share of the daily limit — same thresholds as the overlay badge
+/// (CounterBadge.kt): smile under 50%, neutral to 80%, sleepy from 80%.
+enum Mood {
+  happy,
+  neutral,
+  sleepy;
+
+  static Mood of(int total, int limit) {
+    final used = limit <= 0 ? 1.0 : total / limit;
+    if (used < 0.5) return happy;
+    if (used < 0.8) return neutral;
+    return sleepy;
+  }
+
+  String get asset => 'assets/mood_$name.png';
+}
+
+enum _PermissionStep { accessibility, appInfo, notNow, alreadyOn }
+
+class _Header extends StatelessWidget {
+  final bool active;
+  final VoidCallback onLongPress;
+  const _Header({required this.active, required this.onLongPress});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = DoomColors.of(context);
+    final status = active ? c.calm : c.limit;
+    return Row(
+      children: [
+        // Long-press the name: hidden diagnostics (view IDs seen in Instagram/YouTube).
+        GestureDetector(
+          onLongPress: onLongPress,
+          child: Row(
+            children: [
+              ClipOval(child: Image.asset('assets/avatar.png', width: 32, height: 32)),
+              const SizedBox(width: 10),
+              Text('DoomHault',
+                  style: TextStyle(
+                      color: c.text, fontSize: 20, fontWeight: FontWeight.w800)),
+            ],
+          ),
+        ),
+        const Spacer(),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: status.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.circle, size: 8, color: status),
+              const SizedBox(width: 6),
+              Text(active ? 'Active' : 'Off',
+                  style: TextStyle(
+                      color: status, fontSize: 12, fontWeight: FontWeight.w600)),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// The mood face inside a ring showing how much of today's limit is used.
+class _MoodRing extends StatelessWidget {
+  final int total;
+  final int limit;
+  const _MoodRing({required this.total, required this.limit});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = DoomColors.of(context);
+    final mood = Mood.of(total, limit);
+    final progress = limit <= 0 ? 1.0 : (total / limit).clamp(0.0, 1.0);
+    return SizedBox(
+      width: 220,
+      height: 220,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          TweenAnimationBuilder<double>(
+            tween: Tween(end: progress),
+            duration: const Duration(milliseconds: 500),
+            curve: Curves.easeOutCubic,
+            builder: (context, value, _) => CircularProgressIndicator(
+              value: value,
+              strokeWidth: 12,
+              strokeCap: StrokeCap.round,
+              backgroundColor: c.track,
+              color: c.forProgress(total, limit),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              child: ClipOval(
+                key: ValueKey(mood),
+                child: Image.asset(mood.asset, fit: BoxFit.cover),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-enum _PermissionStep { accessibility, appInfo, notNow, alreadyOn }
+class _AppTile extends StatelessWidget {
+  final String name;
+  final int count;
+  const _AppTile({required this.name, required this.count});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = DoomColors.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: c.surface,
+        border: Border.all(color: c.border),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(name, style: TextStyle(color: c.muted, fontSize: 13)),
+          const SizedBox(height: 4),
+          Text('$count',
+              style: TextStyle(
+                  color: c.text, fontSize: 24, fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
+}
+
+/// Daily limit: -/+ stepper and quick presets.
+class _LimitCard extends StatelessWidget {
+  final int limit;
+  final ValueChanged<int> onChanged;
+  const _LimitCard({required this.limit, required this.onChanged});
+
+  static const _presets = [10, 15, 20, 30, 50];
+
+  @override
+  Widget build(BuildContext context) {
+    final c = DoomColors.of(context);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 12, 16),
+      decoration: BoxDecoration(
+        color: c.surface,
+        border: Border.all(color: c.border),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text('Daily limit',
+                  style: TextStyle(
+                      color: c.text, fontSize: 15, fontWeight: FontWeight.w600)),
+              const Spacer(),
+              _StepButton(
+                icon: Icons.remove,
+                tooltip: 'Lower limit',
+                onTap: limit > 1 ? () => onChanged(limit - 1) : null,
+              ),
+              SizedBox(
+                width: 48,
+                child: Text('$limit',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        color: c.text, fontSize: 20, fontWeight: FontWeight.w700)),
+              ),
+              _StepButton(
+                icon: Icons.add,
+                tooltip: 'Raise limit',
+                onTap: limit < 500 ? () => onChanged(limit + 1) : null,
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final p in _presets)
+                ChoiceChip(
+                  label: Text('$p'),
+                  selected: limit == p,
+                  onSelected: (_) => onChanged(p),
+                  showCheckmark: false,
+                  selectedColor: c.calm,
+                  labelStyle: TextStyle(
+                    color: limit == p ? c.background : c.text,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  side: BorderSide(color: c.border),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 class _EnableBanner extends StatelessWidget {
   final VoidCallback onTap;
@@ -462,22 +673,26 @@ class _EnableBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: DoomColors.of(context).surface,
-          border: Border.all(color: DoomColors.of(context).border),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: const Text(
-          'Tap to enable DoomHault in Accessibility settings. '
-          'It\'s needed to count and block Reels & Shorts.',
-          style: TextStyle(fontSize: 13, height: 1.4),
-        ),
+    final c = DoomColors.of(context);
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: c.limit.withValues(alpha: 0.08),
+        border: Border.all(color: c.limit.withValues(alpha: 0.35)),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('DoomHault is off',
+              style: TextStyle(
+                  color: c.text, fontSize: 15, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          Text('Turn on Accessibility access so it can count and pause Reels & Shorts.',
+              style: TextStyle(color: c.muted, fontSize: 13, height: 1.4)),
+          const SizedBox(height: 12),
+          FilledButton(onPressed: onTap, child: const Text('Turn on')),
+        ],
       ),
     );
   }
@@ -485,13 +700,15 @@ class _EnableBanner extends StatelessWidget {
 
 class _StepButton extends StatelessWidget {
   final IconData icon;
-  final VoidCallback onTap;
-  const _StepButton({required this.icon, required this.onTap});
+  final String tooltip;
+  final VoidCallback? onTap;
+  const _StepButton({required this.icon, required this.tooltip, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
     return IconButton(
       onPressed: onTap,
+      tooltip: tooltip,
       icon: Icon(icon, size: 20),
       style: IconButton.styleFrom(
         side: BorderSide(color: DoomColors.of(context).border),
